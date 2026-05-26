@@ -391,12 +391,7 @@ export default function GameScreen({ route, navigation }) {
   };
 
   const getApiBaseUrl = () => {
-    const hostUri = Constants.expoConfig?.hostUri;
-    if (hostUri) {
-      const ip = hostUri.split(':')[0];
-      return `http://${ip}:8000`;
-    }
-    return 'http://localhost:8000';
+    return 'https://aviator-fcon.onrender.com';
   };
 
   const showPrediction = async () => {
