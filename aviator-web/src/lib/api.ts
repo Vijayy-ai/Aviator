@@ -1,5 +1,5 @@
 function resolvedApiBaseUrl() {
-  const env = process.env.NEXT_PUBLIC_DJANGO_API_BASE_URL?.replace(/\/$/, "") || "http://localhost:8000";
+  const env = process.env.NEXT_PUBLIC_DJANGO_API_BASE_URL?.replace(/\/$/, "") || "https://aviator-fcon.onrender.com";
   // If you open the web UI via LAN IP (10.x), "localhost:8000" points to the phone itself and login fails.
   if (typeof window !== "undefined") {
     const host = window.location.hostname;

@@ -1,5 +1,5 @@
 function resolvedWsUrl() {
-  const env = process.env.NEXT_PUBLIC_WS_URL?.trim() || "ws://localhost:8000/ws/game/";
+  const env = process.env.NEXT_PUBLIC_WS_URL?.trim() || "wss://aviator-fcon.onrender.com/ws/game/";
   if (typeof window !== "undefined") {
     const host = window.location.hostname;
     const isEnvLocalhost = /^ws:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//i.test(env);
@@ -17,7 +17,7 @@ function resolvedPreviewWsUrl() {
   const env =
     process.env.NEXT_PUBLIC_PREVIEW_WS_URL?.trim() ||
     process.env.NEXT_PUBLIC_WS_URL?.trim()?.replace(/\/ws\/game\/?$/i, "/ws/game-preview/") ||
-    "ws://localhost:8000/ws/game-preview/";
+    "wss://aviator-fcon.onrender.com/ws/game-preview/";
   if (typeof window !== "undefined") {
     const host = window.location.hostname;
     const isEnvLocalhost = /^ws:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//i.test(env);
