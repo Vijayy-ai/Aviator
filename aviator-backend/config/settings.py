@@ -117,12 +117,15 @@ def _configure_sqlite(sender, connection, **kwargs):
 # CORS (web UI origin)
 # Provide comma-separated list via env, e.g.:
 # CORS_ALLOWED_ORIGINS=http://localhost:3000,http://10.208.14.209:3000
-CORS_ALLOWED_ORIGINS = _split_csv(
-    os.environ.get(
-        "CORS_ALLOWED_ORIGINS",
-        "http://localhost:3000",
+CORS_ALLOWED_ORIGINS = [
+    origin.rstrip("/")
+    for origin in _split_csv(
+        os.environ.get(
+            "CORS_ALLOWED_ORIGINS",
+            "http://localhost:3000",
+        )
     )
-)
+]
 CORS_ALLOW_CREDENTIALS = True
 
 REST_FRAMEWORK = {
