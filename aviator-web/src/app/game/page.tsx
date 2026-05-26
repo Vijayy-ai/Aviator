@@ -875,7 +875,7 @@ export default function GamePage() {
                 <div className="flex max-w-[148px] items-center gap-1.5 rounded-full bg-[#16171c] px-2.5 py-1.5 ring-1 ring-white/10">
                   <span className={["h-2 w-2 shrink-0 rounded-full", connected ? "bg-emerald-400" : "bg-zinc-600"].join(" ")} />
                   <span className="truncate text-[13px] font-bold tracking-tight text-[#39ef65] tabular-nums">
-                    {wallet != null ? `${wallet} INR` : "0.00 INR"}
+                    {wallet != null ? `${wallet} INR` : "Loading..."}
                   </span>
                 </div>
                 <button
@@ -1003,7 +1003,7 @@ export default function GamePage() {
                     </div>
                   ) : null}
 
-                  {waiting && ((panel1.placedRoundId === roundId && !panel1.cashedRoundId) || (panel2.placedRoundId === roundId && !panel2.cashedRoundId)) ? (
+                  {waiting && roundId != null && ((panel1.placedRoundId === roundId && !panel1.cashedRoundId) || (panel2.placedRoundId === roundId && !panel2.cashedRoundId)) ? (
                     <div className="absolute inset-0 z-[4] flex items-center justify-center pointer-events-none mt-10">
                       <div className="bg-[#28a909]/20 text-[#39ef65] border border-[#28a909]/40 px-4 py-1.5 rounded-full text-xs font-bold tracking-wide shadow-[0_0_15px_rgba(40,169,9,0.3)] backdrop-blur-sm animate-pulse">
                         BET ACCEPTED
@@ -1551,12 +1551,12 @@ function BetPanel({
   const autoEnabled = state.mode === "auto";
 
   // Logic for button color and text
-  const isBetForNextRound = state.placedRoundId != null && status === "flying" && state.placedRoundId !== roundId;
-  const isPlacedForCurrent = state.placedRoundId === roundId;
-  const isCashedOut = state.cashedRoundId === roundId;
+  const isBetForNextRound = roundId != null && state.placedRoundId != null && status === "flying" && state.placedRoundId !== roundId;
+  const isPlacedForCurrent = roundId != null && state.placedRoundId === roundId;
+  const isCashedOut = roundId != null && state.cashedRoundId === roundId;
   
   let btnBg = "bg-[#28a909] ring-[#28a909]/40";
-  let btnText = "Bet";
+  let btnText = roundId == null ? "Connecting..." : "Bet";
   let btnAction = canBet ? onBet : undefined;
   let btnOpacity = !canBet && !canCashout ? "opacity-50" : "";
 
