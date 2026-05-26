@@ -1,0 +1,61 @@
+Act as an Elite Full-Stack Systems Architect and Senior Developer. I am building a real-time, highly scalable predictive game platform (similar to the 'Aviator' crash game). 
+
+I am using a Monorepo structure. I already have a React Native Expo app (which will ONLY act as a dummy predictor screen). My current task is to build the Core Backend and the Web Frontend.
+
+---
+### 🛠️ TECH STACK
+* **Backend:** Django, Django REST Framework (DRF), Django Channels (WebSockets for real-time), Redis (Channel layer & fast state), PostgreSQL (Main DB), Firebase Admin SDK (Auth).
+* **Web Frontend:** Next.js (App Router), Tailwind CSS, Socket.io-client / Native WebSockets.
+* **UI/UX Rule:** The Web Frontend MUST be strictly "Mobile-First" and highly responsive. It should look and feel like a native mobile app when opened on a phone browser.
+
+---
+### 🧠 CORE ARCHITECTURE RULES (CRITICAL)
+1.  **Dumb Clients, Smart Server:** The frontend is completely stupid. It does NOT calculate crash timers or logic. It ONLY renders what the Django WebSocket server broadcasts.
+2.  **The Game Engine (Continuous Loop):** The backend must run a continuous background task (e.g., using Asyncio or Celery) that manages a loop of 100 predefined game rounds.
+3.  **Firebase Auth Flow:** The client logs in via Firebase (Email/Password). It sends the `idToken` to Django. Django verifies it, creates/updates a `UserProfile` (with a fake wallet balance), and issues an auth token (or session) for future API calls.
+
+---
+### 🔄 THE GAME LOOP FLOW (How it must work)
+The backend Game Engine manages 3 distinct states and broadcasts them to all connected WebSocket clients simultaneously:
+
+* **STATE 1: WAITING (e.g., 5-10 seconds)**
+    * Backend broadcast: `{"status": "waiting", "time_left": 5.0, "round_id": 12}`
+    * Web Frontend: Shows a progress bar/timer and allows users to place bets.
+    * Mobile App (Separate connection logic): Receives prediction for the upcoming round.
+* **STATE 2: FLYING (Multiplier increases)**
+    * Backend broadcast every 100ms: `{"status": "flying", "current_multiplier": 1.45}`
+    * Web Frontend: Renders the plane flying and updates the multiplier number on screen. Locks new bets. Allows users to click "Cash Out".
+* **STATE 3: CRASHED**
+    * Backend stops at the predefined crash point (e.g., 3.20x).
+    * Backend broadcast: `{"status": "crashed", "crash_point": 3.20}`
+    * Web Frontend: Explodes the plane instantly. Displays the crashed value in red. 
+    * Backend resolves all bets, updates wallets, and immediately transitions back to STATE 1 for the next round.
+
+---
+### 🗄️ DATABASE SCHEMA REQUIREMENTS
+Generate Django models for:
+1.  `UserProfile`: Linked to Firebase UID. Fields: `username`, `fake_wallet_balance` (default: 1000.00).
+2.  `GameRound`: Fields: `round_number`, `crash_multiplier` (Decimal), `status` (Pending, Active, Completed), `created_at`.
+3.  `Bet`: Fields: `user` (ForeignKey), `round` (ForeignKey), `bet_amount`, `cashout_multiplier` (null if crashed), `status` (Pending, Won, Lost), `payout_amount`.
+
+---
+### 🚀 EXECUTION PLAN & TASKS
+Please execute the setup in the following step-by-step phases. DO NOT write all the code at once. Wait for my confirmation after each phase.
+
+**PHASE 1: Project Initialization & Auth**
+* Provide terminal commands to set up the Django project and Next.js project in a monorepo format.
+* Write the Django models listed above.
+* Write the DRF API view that accepts a Firebase `idToken`, verifies it, and returns the UserProfile data.
+* Write a simple Next.js mobile-responsive Login page using Tailwind CSS that authenticates via Firebase and calls the Django API.
+
+**PHASE 2: The WebSocket Server & Game Engine**
+* Set up Django Channels and Redis.
+* Write the asynchronous Game Engine loop that manages the WAITING, FLYING, and CRASHED states.
+* Write the WebSocket Consumer that broadcasts these states to connected clients.
+
+**PHASE 3: The Next.js Game Dashboard**
+* Create the main `/game` page.
+* Implement the WebSocket client connection to listen to the Django server.
+* Build a sleek, mobile-first UI using Tailwind that updates the screen based on the incoming WebSocket JSON payload (Waiting timer, Flying multiplier, Crash animation).
+
+Begin with **PHASE 1**. Ask me any clarifying questions before providing the code.

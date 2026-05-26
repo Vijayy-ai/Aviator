@@ -1,0 +1,45 @@
+{
+  "expo": {
+    "name": "Aviator-Predictor-V5.0",
+    "slug": "aviator-app",
+    "version": "5.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#000000"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "userInterfaceStyle": "dark"
+    },
+    "android": {
+      "package": "com.brainitix.aviatorapp",
+      "versionCode": 5,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#000000"
+      },
+      "edgeToEdgeEnabled": true,
+      "userInterfaceStyle": "dark",
+      "permissions": [
+        "android.permission.INTERNET",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.CAMERA"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "ab752a8d-0443-4ac9-a5d3-de09e86dd9e1"
+      }
+    },
+    "owner": "manraj03"
+  }
+}

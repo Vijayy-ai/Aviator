@@ -1,0 +1,100 @@
+@import "tailwindcss";
+
+/* hide scrollbars for horizontal carousels */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Ref A: dark purple radial “sunburst” – quarter visible, anchor bottom-left inside arena */
+.aviator-rays-anchor {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.aviator-rays-rotor {
+  position: absolute;
+  left: -520px;
+  top: -520px;
+  width: 1040px;
+  height: 1040px;
+  background:
+    repeating-conic-gradient(
+      from 210deg at 50% 50%,
+      rgba(130, 80, 200, 0.16) 0deg,
+      rgba(130, 80, 200, 0.16) 3.5deg,
+      rgba(40, 20, 60, 0) 3.5deg,
+      rgba(40, 20, 60, 0) 17deg
+    ),
+    repeating-conic-gradient(
+      from 0deg at 50% 50%,
+      rgba(255, 255, 255, 0.04) 0deg,
+      rgba(255, 255, 255, 0.04) 2.5deg,
+      rgba(255, 255, 255, 0) 2.5deg,
+      rgba(255, 255, 255, 0) 14deg
+    );
+  transform-origin: 50% 50%;
+  animation: aviator-rays-spin 36s linear infinite;
+  opacity: 0.95;
+  pointer-events: none;
+}
+
+@keyframes aviator-rays-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.aviator-arena-blue-haze {
+  background: radial-gradient(
+    ellipse 92% 70% at 50% 42%,
+    rgba(44, 120, 200, 0.45) 0%,
+    rgba(44, 120, 200, 0.12) 28%,
+    transparent 58%
+  );
+}
+
+html {
+  overflow: hidden;
+  height: 100%;
+}
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+  min-height: 100dvh;
+}
