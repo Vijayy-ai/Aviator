@@ -237,13 +237,13 @@ export default function LobbyPage() {
         <div className="relative flex h-full w-full min-w-0 max-w-full flex-col overflow-hidden bg-zinc-50 sm:rounded-[28px] sm:shadow-[0_24px_70px_-30px_rgba(0,0,0,0.35)] sm:ring-1 sm:ring-zinc-200">
           {/* Header */}
           <div className="sticky top-0 z-10 border-b border-zinc-100/80 bg-white/95 backdrop-blur">
-            <div className="flex items-center justify-between px-4 py-3.5">
-              <div className="flex min-w-0 items-center gap-3">
-                <div className="h-9 w-9 shrink-0 rounded-2xl bg-gradient-to-r from-rose-500 to-orange-400 shadow-sm ring-1 ring-white/30" />
-                <div className="min-w-0 leading-tight">
-                  <div className="text-sm font-bold tracking-tight">Aviator</div>
-                  <div className="text-xs font-medium text-zinc-500">Mobile-first web</div>
-                </div>
+            <div className="flex items-center justify-between px-4 py-3">
+              <div className="flex min-w-0 items-center gap-2">
+                <svg width="28" height="28" viewBox="0 0 32 32" aria-hidden className="shrink-0">
+                  <path fill="#ff3b30" d="M5 7.5h22v6.2H18.6V25h-6.4V13.7H5V7.5Z" />
+                  <path fill="#ff6a45" d="M16.2 7.5h10.8L21.4 16H14.2L16.2 7.5Z" />
+                </svg>
+                <div className="min-w-0 text-[20px] font-extrabold leading-none tracking-tight text-[#ff3b30]">Tc Lottery</div>
               </div>
               <button
                 type="button"
@@ -258,14 +258,17 @@ export default function LobbyPage() {
                     /* ignore */
                   }
                 }}
-                className="relative flex h-10 w-10 items-center justify-center rounded-full bg-zinc-100 text-zinc-600 ring-1 ring-zinc-200/80"
+                className="relative flex h-9 w-9 items-center justify-center rounded-[12px] bg-[#ffe1dc] active:scale-95"
               >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                  <path d="M6 9a6 6 0 1 1 12 0c0 7 3 7 3 9H3c0-2 3-2 3-9Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-                  <path d="M10 20a2 2 0 0 0 4 0" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
+                  <path
+                    fill="#ff4d45"
+                    d="M12 3.2a1.35 1.35 0 0 0-1.32 1.1A5.15 5.15 0 0 0 6.2 9.4v4.15L4.7 15.7a.9.9 0 0 0 .68 1.5h13.24a.9.9 0 0 0 .68-1.5L18 13.55V9.4a5.15 5.15 0 0 0-4.48-5.1A1.35 1.35 0 0 0 12 3.2Z"
+                  />
+                  <path fill="#ff4d45" d="M9.7 18.2a2.3 2.3 0 0 0 4.6 0H9.7Z" />
                 </svg>
                 {inboxNotes(bonus).some((n) => !readNotes.includes(n.id)) ? (
-                  <span className="absolute top-2 right-2 h-2 w-2 rounded-full bg-[#f95959]" />
+                  <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-[#ff3b30] ring-2 ring-[#ffe1dc]" />
                 ) : null}
               </button>
             </div>

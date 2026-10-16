@@ -10,6 +10,7 @@ import { MobileShell } from "@/components/layout/MobileShell";
 import { useFirebaseUser } from "@/hooks/useFirebaseUser";
 import { fetchMe, updateUsername } from "@/lib/api";
 import { firebaseAuth } from "@/lib/firebase";
+import { PLAYER_FACES } from "@/lib/live-round-bets";
 
 type Profile = {
   username: string;
@@ -56,8 +57,20 @@ export default function AccountPage() {
   const [editing, setEditing] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
   const [saving, setSaving] = useState(false);
+  const [faceSrc, setFaceSrc] = useState(PLAYER_FACES[0]!);
 
-  const email = user?.email ?? "";
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("aviator_avatar");
+      const index = Number(raw);
+      if (raw != null && Number.isFinite(index)) {
+        const i = ((index % PLAYER_FACES.length) + PLAYER_FACES.length) % PLAYER_FACES.length;
+        setFaceSrc(PLAYER_FACES[i]!);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   useEffect(() => {
     if (!ready) return;
@@ -125,21 +138,21 @@ export default function AccountPage() {
   return (
     <MobileShell>
       <div className="min-w-0 max-w-full overflow-x-hidden">
-        <div className="bg-gradient-to-r from-rose-500 to-orange-400 px-4 pb-4 pt-3 text-white">
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-full bg-white/25 ring-2 ring-white/40">
+        <div className="bg-gradient-to-r from-rose-500 to-orange-400 px-4 pb-6 pt-8 text-white">
+          <div className="flex min-w-0 items-center gap-3.5">
+            <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-full bg-white/25 ring-2 ring-white/70">
               <Image
-                src={user.photoURL || "/platformrecomand/aviator.jpeg"}
+                src={faceSrc}
                 alt=""
                 fill
-                sizes="56px"
+                sizes="64px"
                 className="object-cover"
                 unoptimized
                 priority
               />
             </div>
             <div className="min-w-0 flex-1">
-              <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <div className="flex min-w-0 items-center gap-2">
                 {!editing ? (
                   <div className="min-w-0 truncate text-base font-extrabold tracking-tight">
                     {profile?.username || user.displayName || "MEMBER"}
@@ -170,10 +183,6 @@ export default function AccountPage() {
                     {saving ? "Saving..." : "Save"}
                   </button>
                 ) : null}
-              </div>
-              <div className="mt-1 flex min-w-0 flex-col gap-0.5 text-xs font-semibold text-white/90">
-                {email ? <span className="truncate">Email: {email}</span> : null}
-                {profile?.firebase_uid ? <span className="truncate">UID: {profile.firebase_uid}</span> : null}
               </div>
             </div>
           </div>

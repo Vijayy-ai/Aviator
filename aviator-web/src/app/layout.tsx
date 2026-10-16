@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Aviator",
-  description: "Real-time crash game (web client)",
+  title: "Tc Lottery",
+  description: "Tc Lottery — lottery and games",
 };
 
 export default function RootLayout({
