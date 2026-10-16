@@ -1,16 +1,24 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { signOut } from "firebase/auth";
 
 import { MobileShell } from "@/components/layout/MobileShell";
 import { useFirebaseUser } from "@/hooks/useFirebaseUser";
 import { fetchMe, updateUsername } from "@/lib/api";
+import { firebaseAuth } from "@/lib/firebase";
 
-type Profile = { username: string; firebase_uid: string; platform_type: "WEB" | "APP"; fake_wallet_balance: string };
-
-import Link from "next/link";
+type Profile = {
+  username: string;
+  firebase_uid: string;
+  platform_type: "WEB" | "APP";
+  fake_wallet_balance: string;
+  total_bonus?: string;
+  today_bonus?: string;
+};
 
 function ActionIcon({ kind }: { kind: "wallet" | "deposit" | "withdraw" | "vip" }) {
   const base = "flex h-10 w-10 items-center justify-center rounded-2xl bg-white shadow-sm ring-1 ring-white/50";
@@ -233,6 +241,17 @@ export default function AccountPage() {
           <MenuRow icon="🎁" title="Gifts" />
           <MenuRow icon="📊" title="Game statistics" />
           <MenuRow icon="🌐" title="Language" right={<span className="text-sm font-bold text-zinc-600">English</span>} />
+          <button
+            type="button"
+            onClick={() => {
+              void signOut(firebaseAuth).finally(() => {
+                router.replace("/");
+              });
+            }}
+            className="flex h-12 w-full items-center justify-center rounded-2xl bg-rose-500 text-sm font-extrabold text-white shadow-sm active:scale-[0.99]"
+          >
+            Log out
+          </button>
         </div>
       </div>
     </MobileShell>

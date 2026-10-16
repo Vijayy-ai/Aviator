@@ -3,11 +3,15 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { fetchMe } from "@/lib/api";
+import { useFirebaseUser } from "@/hooks/useFirebaseUser";
+
 import { ChevronRightIcon, FlameIcon } from "@/components/icons/LobbyIcons";
 import { APP_CHROME_BG } from "@/components/layout/AppChrome";
 import { CategoryTile, type CategoryTileData } from "@/components/lobby/CategoryTile";
 import { EarningsListRow, EarningsPodium } from "@/components/lobby/EarningsPodium";
 import { GamePoster } from "@/components/lobby/GamePoster";
+import { LobbyImage } from "@/components/lobby/LobbyImage";
 import { LotteryRowCard } from "@/components/lobby/LotteryRowCard";
 import { BottomTab } from "@/components/nav/BottomTab";
 import {
@@ -20,22 +24,13 @@ import {
   SECTION_RUMMY,
   SECTION_SLOTS,
   SECTION_SPORTS,
-  toneGradientClass,
   type GameCategorySlug,
   countForCategory,
-  type BannerTone,
 } from "@/data/lobby-catalog";
 
 const RUPEE = "\u20B9";
 
-type Banner = { id: string; title: string; subtitle: string; tone: BannerTone };
-const banners: Banner[] = [
-  { id: "b1", title: "Daily Check-In", subtitle: "Recharge & claim reward", tone: "violet" },
-  { id: "b2", title: "VIP Rewards", subtitle: "More level, more benefits", tone: "rose" },
-  { id: "b3", title: "Hot Games", subtitle: "Top picks for you", tone: "blue" },
-  { id: "b4", title: "Lucky Bonus", subtitle: "Limited time events", tone: "orange" },
-  { id: "b5", title: "Safe & Secure", subtitle: "Fast deposit/withdraw", tone: "emerald" },
-];
+const banners = ["/banner/take1.png", "/banner/take2.png", "/banner/take3.png", "/banner/take4.png", "/banner/take5.png"];
 
 const quickCats: CategoryTileData[] = [
   {
@@ -107,13 +102,15 @@ type SectionId =
   | "original"
   | "platform";
 
-const WINNING_FEED_SEED = [
-  { id: "seed-1", user: "Mem***UQX", amount: "1,247.30" },
-  { id: "seed-2", user: "Mem***QVU", amount: "892.15" },
-  { id: "seed-3", user: "Mem***BPD", amount: "3,120.00" },
-  { id: "seed-4", user: "Mem***YSL", amount: "556.90" },
-  { id: "seed-5", user: "Mem***NUM", amount: "2,008.45" },
-  { id: "seed-6", user: "Mem***GZG", amount: "764.20" },
+const WINNING_FEED = [
+  { id: "w1", user: "Mem***UQX", amount: "1,247.30", photo: "/faces/face-04.jpg" },
+  { id: "w2", user: "Mem***QVU", amount: "892.15", photo: "/faces/face-05.jpg" },
+  { id: "w3", user: "Mem***BPD", amount: "3,120.00", photo: "/faces/face-06.jpg" },
+  { id: "w4", user: "Mem***YSL", amount: "556.90", photo: "/faces/face-07.jpg" },
+  { id: "w5", user: "Mem***NUM", amount: "2,008.45", photo: "/faces/face-08.jpg" },
+  { id: "w6", user: "Mem***GZG", amount: "764.20", photo: "/faces/face-09.jpg" },
+  { id: "w7", user: "Mem***XMH", amount: "1,862.00", photo: "/faces/face-10.jpg" },
+  { id: "w8", user: "Mem***JOS", amount: "4,600.00", photo: "/faces/face-no1.jpg" },
 ];
 
 function SectionTitle({
@@ -172,6 +169,38 @@ function PlatformTitle({ title, right }: { title: string; right?: React.ReactNod
 export default function LobbyPage() {
   const [bannerIdx, setBannerIdx] = useState(0);
   const contentRef = useRef<HTMLDivElement | null>(null);
+  const { user, ready } = useFirebaseUser();
+  const [bonus, setBonus] = useState({ total: "0.00", today: "0.00" });
+  const [notesOpen, setNotesOpen] = useState(false);
+  const [readNotes, setReadNotes] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!ready || !user) return;
+    let alive = true;
+    void fetchMe()
+      .then((res) => {
+        if (!alive) return;
+        const total = Number(res.profile.total_bonus ?? 0);
+        const today = Number(res.profile.today_bonus ?? 0);
+        setBonus({
+          total: Number.isFinite(total) ? total.toFixed(2) : "0.00",
+          today: Number.isFinite(today) ? today.toFixed(2) : "0.00",
+        });
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [ready, user]);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("aviator_notes_read");
+      if (raw) setReadNotes(JSON.parse(raw) as string[]);
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   useEffect(() => {
     const t = setInterval(() => {
@@ -179,8 +208,6 @@ export default function LobbyPage() {
     }, 2600);
     return () => clearInterval(t);
   }, []);
-
-  const winningFeed = useWinningFeed();
 
   const sectionTopById = useMemo(() => {
     return {
@@ -214,14 +241,33 @@ export default function LobbyPage() {
               <div className="flex min-w-0 items-center gap-3">
                 <div className="h-9 w-9 shrink-0 rounded-2xl bg-gradient-to-r from-rose-500 to-orange-400 shadow-sm ring-1 ring-white/30" />
                 <div className="min-w-0 leading-tight">
-                  <div className="text-base font-bold tracking-tight">Aviator</div>
+                  <div className="text-sm font-bold tracking-tight">Aviator</div>
                   <div className="text-xs font-medium text-zinc-500">Mobile-first web</div>
                 </div>
               </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <button className="h-10 w-10 rounded-2xl bg-zinc-100 ring-1 ring-zinc-200/80" type="button" aria-label="Notifications" />
-                <button className="h-10 w-10 rounded-2xl bg-zinc-100 ring-1 ring-zinc-200/80" type="button" aria-label="Menu" />
-              </div>
+              <button
+                type="button"
+                aria-label="Notifications"
+                onClick={() => {
+                  setNotesOpen(true);
+                  const ids = inboxNotes(bonus).map((n) => n.id);
+                  setReadNotes(ids);
+                  try {
+                    localStorage.setItem("aviator_notes_read", JSON.stringify(ids));
+                  } catch {
+                    /* ignore */
+                  }
+                }}
+                className="relative flex h-10 w-10 items-center justify-center rounded-full bg-zinc-100 text-zinc-600 ring-1 ring-zinc-200/80"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <path d="M6 9a6 6 0 1 1 12 0c0 7 3 7 3 9H3c0-2 3-2 3-9Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+                  <path d="M10 20a2 2 0 0 0 4 0" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                </svg>
+                {inboxNotes(bonus).some((n) => !readNotes.includes(n.id)) ? (
+                  <span className="absolute top-2 right-2 h-2 w-2 rounded-full bg-[#f95959]" />
+                ) : null}
+              </button>
             </div>
           </div>
 
@@ -229,35 +275,32 @@ export default function LobbyPage() {
           <div ref={contentRef} className="no-scrollbar min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
             {/* Hero: single slide + fade (no horizontal scroll) */}
             <div className="mt-3 px-4">
-              <div className="relative aspect-[16/9] min-h-[148px] w-full overflow-hidden rounded-3xl ring-1 ring-black/5">
-                {banners.map((b, i) => (
-                  <div
-                    key={b.id}
+              <div className="relative aspect-[2.15/1] min-h-[112px] w-full overflow-hidden rounded-2xl ring-1 ring-black/5">
+                {banners.map((src, i) => (
+                  <LobbyImage
+                    key={src}
+                    src={src}
+                    alt=""
+                    fill
+                    priority={i === 0}
+                    sizes="430px"
                     className={[
-                      "absolute inset-0 border border-white/35 bg-gradient-to-r transition-opacity duration-500 ease-out",
-                      toneGradientClass(b.tone),
-                      i === bannerIdx ? "z-10 opacity-100" : "z-0 opacity-0 pointer-events-none",
+                      "object-cover transition-opacity duration-500 ease-out",
+                      i === bannerIdx ? "z-10 opacity-100" : "z-0 opacity-0",
                     ].join(" ")}
-                  >
-                    <div className="flex h-full flex-col justify-center px-5 py-5 text-white sm:px-6 sm:py-6">
-                      <div className="text-sm font-semibold text-white/95">Daman style lobby</div>
-                      <div className="mt-2 text-2xl font-extrabold leading-tight tracking-tight sm:text-[1.65rem]">{b.title}</div>
-                      <div className="mt-1.5 text-base font-medium leading-snug text-white/95">{b.subtitle}</div>
-                      <div className="mt-4 inline-flex h-10 items-center rounded-full bg-white/20 px-5 text-sm font-bold shadow-sm backdrop-blur-sm">
-                        Detail
-                      </div>
-                    </div>
-                  </div>
+                  />
                 ))}
               </div>
-              <div className="mt-3 flex justify-center gap-2">
-                {banners.map((_, i) => (
-                  <span
-                    key={i}
-                    className={[
-                      "h-2 rounded-full transition-all duration-300",
-                      i === bannerIdx ? "w-7 bg-rose-500" : "w-2 bg-zinc-300",
-                    ].join(" ")}
+              <div className="mt-2.5 flex items-center justify-center gap-1.5">
+                {banners.map((src, i) => (
+                  <button
+                    key={src}
+                    type="button"
+                    aria-label={`Banner ${i + 1}`}
+                    onClick={() => setBannerIdx(i)}
+                    className={
+                      i === bannerIdx ? "h-1.5 w-5 rounded-full bg-[#f95959]" : "h-1.5 w-1.5 rounded-full bg-zinc-300"
+                    }
                   />
                 ))}
               </div>
@@ -414,20 +457,10 @@ export default function LobbyPage() {
             {/* Winning information */}
             <SectionTitle title="Winning information" />
             <div className="mt-3 px-4">
-              <div className="rounded-3xl bg-white p-3 shadow-sm ring-1 ring-zinc-200">
-                <div className="space-y-2">
-                  {winningFeed.map((w) => (
-                    <div key={w.id} className="flex items-center justify-between rounded-2xl bg-zinc-50 px-3 py-2.5">
-                      <div className="flex min-w-0 items-center gap-2.5">
-                        <div className="h-8 w-8 shrink-0 rounded-full bg-gradient-to-r from-rose-200 to-orange-200" />
-                        <div className="min-w-0 text-sm font-bold tracking-tight text-zinc-800">{w.user}</div>
-                      </div>
-                      <div className="shrink-0 pl-2 text-sm font-bold tabular-nums text-zinc-900">
-                        Receive {RUPEE}
-                        {w.amount}
-                      </div>
-                    </div>
-                  ))}
+              <div className="h-[300px] overflow-hidden">
+                <div className="win-ticker-track">
+                  <WinningFeedRows />
+                  <WinningFeedRows />
                 </div>
               </div>
             </div>
@@ -435,28 +468,49 @@ export default function LobbyPage() {
             {/* Today's earnings chart */}
             <SectionTitle title="Today's earnings chart" />
             <div className="mt-3 px-4">
-              <div className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-zinc-200">
-                <div className="grid grid-cols-3 gap-2">
-                  <EarningsPodium place="NO2" name="Mem***FVT" amount="11,038,800.00" tone="blue" />
-                  <EarningsPodium place="NO1" name="Pr***n" amount="13,735,170.08" tone="rose" big />
-                  <EarningsPodium place="NO3" name="Mem***4EV" amount="9,187,454.34" tone="orange" />
+              <div className="rounded-[28px] bg-white px-3 pb-2 pt-5 shadow-sm ring-1 ring-zinc-100">
+                <div className="flex items-end gap-2">
+                  <EarningsPodium place="NO2" name="Him***hu" amount="3,657,262.49" tone="blue" photo="/faces/face-no2.jpg" />
+                  <EarningsPodium place="NO1" name="Mem***JOS" amount="4,392,360.00" tone="rose" photo="/faces/face-no1.jpg" big />
+                  <EarningsPodium place="NO3" name="dam***mes" amount="3,410,400.00" tone="orange" photo="/faces/face-no3.jpg" />
                 </div>
-
-                <div className="mt-4 space-y-2">
-                  {Array.from({ length: 7 }).map((_, i) => (
-                    <EarningsListRow
-                      key={i}
-                      rank={i + 4}
-                      name={`Mem***${String.fromCharCode(65 + i)}${String.fromCharCode(67 + i)}`}
-                      amount={6_000_000 - i * 420_000}
-                    />
-                  ))}
-                </div>
+              </div>
+              <div className="mt-3 space-y-2.5">
+                {[
+                  ["Ru***sh", "2,992,642.20", "/faces/face-04.jpg"],
+                  ["Mem***3MA", "2,810,854.84", "/faces/face-05.jpg"],
+                  ["Mem***KIS", "2,439,894.26", "/faces/face-06.jpg"],
+                  ["Mem***PDG", "2,387,435.80", "/faces/face-07.jpg"],
+                  ["SUK***EET", "2,341,974.60", "/faces/face-08.jpg"],
+                  ["Mem***UJE", "2,339,311.72", "/faces/face-09.jpg"],
+                  ["Mem***MGI", "2,237,704.56", "/faces/face-10.jpg"],
+                ].map(([name, amount, photo], i) => (
+                  <EarningsListRow key={name} rank={i + 4} name={name} amount={amount} photo={photo} />
+                ))}
               </div>
             </div>
 
             <div className="h-6" />
           </div>
+
+          {notesOpen ? (
+            <div className="absolute inset-0 z-30 bg-black/40" onClick={() => setNotesOpen(false)}>
+              <div className="absolute top-16 right-3 left-3 max-h-[70%] overflow-hidden rounded-2xl bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-center justify-between border-b border-zinc-100 px-4 py-3">
+                  <div className="text-[16px] font-semibold text-zinc-900">Notifications</div>
+                  <button type="button" onClick={() => setNotesOpen(false)} className="text-sm text-zinc-500">Close</button>
+                </div>
+                <div className="no-scrollbar max-h-[420px] space-y-2 overflow-y-auto px-3 py-3">
+                  {inboxNotes(bonus).map((note) => (
+                    <div key={note.id} className="rounded-xl bg-zinc-50 px-3 py-3">
+                      <div className="text-[14px] font-medium text-zinc-800">{note.title}</div>
+                      <p className="mt-1 text-[13px] font-normal leading-5 text-zinc-500">{note.body}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ) : null}
 
           {/* Bottom tab bar */}
           <div className="shrink-0 border-t border-zinc-200/80 bg-white">
@@ -469,25 +523,53 @@ export default function LobbyPage() {
 }
 
 
-function useWinningFeed() {
-  const [items, setItems] = useState(WINNING_FEED_SEED);
-  useEffect(() => {
-    const t = setInterval(() => {
-      setItems((prev) => {
-        const next = [randomWinning(), ...prev];
-        return next.slice(0, 6);
-      });
-    }, 1800);
-    return () => clearInterval(t);
-  }, []);
-  return items;
+function inboxNotes(bonus: { total: string; today: string }) {
+  return [
+    {
+      id: "welcome",
+      title: "Welcome",
+      body: "Your account is ready. Aviator, bonuses, and your invitation code are inside the app.",
+    },
+    {
+      id: "bonus",
+      title: "Your bonus",
+      body: `Today's bonus is ₹${bonus.today}. Total bonus is ₹${bonus.total}. These amounts show on the Activity tab.`,
+    },
+    {
+      id: "attendance",
+      title: "Attendance",
+      body: "Open Activity and claim ₹10 once each day. It adds to today's bonus and the total.",
+    },
+    {
+      id: "gift",
+      title: "Gift code",
+      body: "WELCOME50 adds ₹50 once. Enter it under Gifts on the Activity tab.",
+    },
+  ];
 }
 
-function randomWinning() {
-  const id = `${Date.now()}_${Math.random().toString(16).slice(2)}`;
-  const users = ["Mem***UQX", "Mem***QVU", "Mem***BPD", "Mem***GZG", "Mem***YSL", "Mem***XMH", "Mem***NUM"];
-  const user = users[Math.floor(Math.random() * users.length)]!;
-  const amount = (Math.floor(Math.random() * 4800) + 120).toFixed(2);
-  return { id, user, amount };
+function WinningFeedRows() {
+  return (
+    <div>
+      {WINNING_FEED.map((w) => (
+        <div key={w.id} className="mb-2 flex items-center gap-2.5 rounded-2xl bg-white px-2.5 py-2 shadow-sm ring-1 ring-zinc-100">
+          <span
+            className="h-10 w-10 shrink-0 rounded-full bg-cover bg-center shadow-md ring-[3px] ring-white"
+            style={{ backgroundImage: `url("${w.photo}")` }}
+            role="img"
+            aria-hidden
+          />
+          <div className="min-w-0 flex-1 truncate text-[13px] font-medium text-zinc-500">{w.user}</div>
+          <div className="shrink-0 text-right">
+            <div className="text-[13px] font-semibold tabular-nums text-[#1aae5a]">
+              Receive {RUPEE}
+              {w.amount}
+            </div>
+            <div className="text-[11px] font-normal text-zinc-400">Winning amount</div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 }
 

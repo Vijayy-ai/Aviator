@@ -46,6 +46,19 @@
   pointer-events: none;
 }
 
+@keyframes win-ticker {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-50%);
+  }
+}
+
+.win-ticker-track {
+  animation: win-ticker 22s linear infinite;
+}
+
 @keyframes aviator-rays-spin {
   from {
     transform: rotate(0deg);

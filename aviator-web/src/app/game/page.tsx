@@ -3,9 +3,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { APP_CHROME_BG } from "@/components/layout/AppChrome";
 import { WS_URL } from "@/lib/ws";
-import { cashout, fetchGameState, fetchMe, placeBet, type GameStateResponse } from "@/lib/api";
+import { cancelBet, cashout, fetchGameState, fetchMe, placeBet, type GameStateResponse } from "@/lib/api";
 import { startAviatorSimulation } from "@/lib/aviator-simulation";
 import { crashForRound } from "@/data/crash-sequence";
+import { buildRoundBets, crowdCashed, crowdTotal, PLAYER_FACES, settleBotsAtMultiplier, type LiveBetRow } from "@/lib/live-round-bets";
 
 const FORCE_AVIATOR_SIM = false;
 const ALLOW_SIM_FALLBACK = false;
@@ -17,6 +18,26 @@ type GamePayload = WaitingPayload | FlyingPayload | CrashedPayload;
 
 function formatX(v: number) {
   return `${v.toFixed(2)}x`;
+}
+
+function playTone(freq: number, dur = 0.12) {
+  try {
+    const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.frequency.value = freq;
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    gain.gain.setValueAtTime(0.06, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
+    osc.start();
+    osc.stop(ctx.currentTime + dur);
+    window.setTimeout(() => void ctx.close(), (dur + 0.05) * 1000);
+  } catch {
+    /* ignore */
+  }
 }
 
 type BetPanelMode = "bet" | "auto";
@@ -31,18 +52,49 @@ type BetPanelState = {
   lastActionError: string | null;
   placedRoundId: number | null;
   cashedRoundId: number | null;
+  /** Stake captured when the bet was placed. Payout math uses this, not later edits. */
+  lockedStake: number | null;
+  /** Armed during flight for the following round. Cancellable until that round opens. */
+  queuedForNext: boolean;
 };
 
 type BetsTab = "all" | "previous" | "top";
-type BetRow = {
+type BetRow = LiveBetRow;
+
+type PreviousRoundSnap = {
+  roundId: number;
+  crashPoint: number;
+  rows: BetRow[];
+  totalPlayers: number;
+  cashedCount: number;
+  cashedAmount: number;
+};
+
+type MyBetRecord = {
   id: string;
-  player: string;
-  betInr: number;
+  roundId: number;
+  panel: 1 | 2;
+  stake: number;
   cashoutX: number | null;
   winInr: number;
-  status: "pending" | "won" | "lost";
-  createdAt: number;
+  status: "won" | "lost";
+  at: number;
 };
+
+type MenuPage = "root" | "avatar" | "free" | "history" | "limits" | "howto" | "rules" | "fair";
+
+const AVATARS = PLAYER_FACES;
+
+function PlayerFace({ src }: { src?: string }) {
+  const photo = src && (src.startsWith("/") || src.startsWith("http")) ? src : AVATARS[0];
+  return (
+    <span
+      className="h-6 w-6 shrink-0 rounded-full bg-cover bg-center ring-1 ring-black/40"
+      style={{ backgroundImage: `url("${photo}")` }}
+      aria-hidden
+    />
+  );
+}
 
 function clamp(n: number, a: number, b: number) {
   return Math.max(a, Math.min(b, n));
@@ -57,38 +109,40 @@ function parsePositiveNumber(s: string) {
   return Number.isFinite(n) ? n : NaN;
 }
 
-function maskedPlayer(seed = 0) {
-  const heads = ["a", "b", "c", "d", "g", "h", "j", "k", "m", "p", "s", "y"];
-  const tail = ["0", "1", "3", "4", "6", "8", "9", "f", "t", "#"];
-  const h = heads[seed % heads.length]!;
-  const t = tail[(seed * 3 + 2) % tail.length]!;
-  return `${h}***${t}`;
-}
-
-function makeSeedBets(): BetRow[] {
-  const base = [8000, 8000, 4907.28, 2000, 2000, 1890.93, 1500, 1076.55, 1000, 1000, 1000, 1000];
-  return base.map((amt, i) => ({
-    id: `seed_${i}`,
-    player: maskedPlayer(i),
-    betInr: amt,
-    cashoutX: null,
-    winInr: 0,
-    status: "pending",
-    createdAt: 1_700_000_000_000 - i * 1200,
-  }));
-}
-
 function betQuickChipRow() {
   return [100, 200, 500, 1000];
 }
 
 
 
-/** Deterministic per round — avoids SSR/client hydration mismatch from Math.random() */
-function arenaPlayersForRound(roundId: number | null | undefined): number {
-  if (roundId == null) return 1200;
-  const seed = ((roundId * 9301 + 49297) >>> 0) % 2400;
-  return 420 + seed;
+const MY_BETS_KEY = "aviator_my_bets";
+
+function loadMyBets(): MyBetRecord[] {
+  try {
+    const raw = localStorage.getItem(MY_BETS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as MyBetRecord[];
+    return Array.isArray(parsed) ? parsed.slice(0, 80) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveMyBets(rows: MyBetRecord[]) {
+  try {
+    localStorage.setItem(MY_BETS_KEY, JSON.stringify(rows.slice(0, 80)));
+  } catch {
+    /* ignore */
+  }
+}
+
+function formatBetStamp(ts: number) {
+  const d = new Date(ts);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return {
+    time: `${pad(d.getHours())}:${pad(d.getMinutes())}`,
+    date: `${pad(d.getDate())}-${pad(d.getMonth() + 1)}-${String(d.getFullYear()).slice(2)}`,
+  };
 }
 
 function crashKey(payload: CrashedPayload) {
@@ -122,9 +176,31 @@ function stateToPayload(state: GameStateResponse): GamePayload {
 
 const LS_ANIM = "aviator_animation";
 const LS_MUSIC = "aviator_music";
+const LS_SOUND = "aviator_sound";
 const LS_NAME = "aviator_display_name";
+const LS_AVATAR = "aviator_avatar";
+const LS_CLIENT_SEED = "aviator_client_seed";
+
+function emptyPanel(amount = "10.00"): BetPanelState {
+  return {
+    amount,
+    mode: "bet",
+    autoBetEnabled: false,
+    autoCashoutEnabled: false,
+    autoCashoutAt: "1.10",
+    placing: false,
+    cashing: false,
+    lastActionError: null,
+    placedRoundId: null,
+    cashedRoundId: null,
+    lockedStake: null,
+    queuedForNext: false,
+  };
+}
 
 const AVIATOR_MUSIC_SRC = "/aviator%20music.mp3";
+const PLANE_CRASH_SRC = "/plancrash.mp3";
+const CRASH_HOLD_MS = 3000;
 
 function randomDisplayName() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
@@ -143,9 +219,14 @@ export default function GamePage() {
   const [history, setHistory] = useState<number[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [betsTab, setBetsTab] = useState<BetsTab>("all");
-  const [bets, setBets] = useState<BetRow[]>(() => makeSeedBets());
+  const [bets, setBets] = useState<BetRow[]>([]);
+  const [previousRound, setPreviousRound] = useState<PreviousRoundSnap | null>(null);
+  const [myBets, setMyBets] = useState<MyBetRecord[]>([]);
+  const [historyLimit, setHistoryLimit] = useState(10);
+  const [booting, setBooting] = useState(false);
   const [myUserLabel] = useState<string>("You");
-  const [showPanel2, setShowPanel2] = useState(false);
+  const [showPanel2, setShowPanel2] = useState(true);
+  const [localAdjust, setLocalAdjust] = useState(0);
 
   const [winOverlay, setWinOverlay] = useState<{
     show: boolean;
@@ -178,30 +259,14 @@ export default function GamePage() {
     }
   }, [payload?.status]);
 
-  const [panel1, setPanel1] = useState<BetPanelState>({
-    amount: "10.00",
-    mode: "bet",
-    autoBetEnabled: false,
-    autoCashoutEnabled: false,
-    autoCashoutAt: "1.10",
-    placing: false,
-    cashing: false,
-    lastActionError: null,
-    placedRoundId: null,
-    cashedRoundId: null,
-  });
-  const [panel2, setPanel2] = useState<BetPanelState>({
-    amount: "10.00",
-    mode: "bet",
-    autoBetEnabled: false,
-    autoCashoutEnabled: false,
-    autoCashoutAt: "1.10",
-    placing: false,
-    cashing: false,
-    lastActionError: null,
-    placedRoundId: null,
-    cashedRoundId: null,
-  });
+  const [panel1, setPanel1] = useState<BetPanelState>(() => emptyPanel("10.00"));
+  const [panel2, setPanel2] = useState<BetPanelState>(() => emptyPanel("10.00"));
+  const panel1Ref = useRef(panel1);
+  const panel2Ref = useRef(panel2);
+  panel1Ref.current = panel1;
+  panel2Ref.current = panel2;
+  const betsRef = useRef(bets);
+  betsRef.current = bets;
 
   const crashFlashRef = useRef(0);
   const lastRoundIdRef = useRef<number | null>(null);
@@ -209,6 +274,9 @@ export default function GamePage() {
   const lastCrashKeyRef = useRef<string | null>(null);
   const heldCrashTimerRef = useRef<number | null>(null);
   const musicAudioRef = useRef<HTMLAudioElement | null>(null);
+  const crashAudioRef = useRef<HTMLAudioElement | null>(null);
+  const lastCrashSoundKeyRef = useRef<string | null>(null);
+  const sawFlyingRef = useRef(false);
   const wsConnectedRef = useRef(false);
   const lastRoundNumberRef = useRef(1);
   const lastCrashResolveKeyRef = useRef<string | null>(null);
@@ -219,20 +287,37 @@ export default function GamePage() {
   const historySeededRef = useRef(false);
 
   const [menuOpen, setMenuOpen] = useState(false);
+  const [menuPage, setMenuPage] = useState<MenuPage>("root");
   const [simulationActive, setSimulationActive] = useState(false);
   const [animationEnabled, setAnimationEnabled] = useState(true);
   const [musicEnabled, setMusicEnabled] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [avatarIdx, setAvatarIdx] = useState(0);
+  const avatarIdxRef = useRef(0);
+  avatarIdxRef.current = avatarIdx;
+  const [clientSeed, setClientSeed] = useState("aviator");
   const [displayName, setDisplayName] = useState("");
+  const multiplierRef = useRef(1);
+  const soundEnabledRef = useRef(true);
+  soundEnabledRef.current = soundEnabled;
+  const musicEnabledRef = useRef(false);
+  musicEnabledRef.current = musicEnabled;
 
   useEffect(() => {
     try {
       const a = localStorage.getItem(LS_ANIM);
       const m = localStorage.getItem(LS_MUSIC);
+      const s = localStorage.getItem(LS_SOUND);
       const n = localStorage.getItem(LS_NAME);
+      const av = localStorage.getItem(LS_AVATAR);
+      const seed = localStorage.getItem(LS_CLIENT_SEED);
       if (a === "0") setAnimationEnabled(false);
       if (a === "1") setAnimationEnabled(true);
       if (m === "1") setMusicEnabled(true);
       if (m === "0") setMusicEnabled(false);
+      if (s === "0") setSoundEnabled(false);
+      if (av && Number.isFinite(Number(av))) setAvatarIdx(Number(av) % AVATARS.length);
+      if (seed) setClientSeed(seed);
       if (n && n.trim()) {
         setDisplayName(n.trim());
       } else {
@@ -254,17 +339,23 @@ export default function GamePage() {
       el.currentTime = 0;
       return;
     }
-    void el.play().catch(() => {});
+    void el.play().catch(() => { });
   }, [musicEnabled]);
 
   useEffect(() => {
-    let unsubscribe = () => {};
+    let unsubscribe = () => { };
     import("@/lib/firebase").then(({ firebaseAuth }) => {
       unsubscribe = firebaseAuth.onAuthStateChanged((user) => {
+        if (FORCE_AVIATOR_SIM || simStartedRef.current) return;
         if (user) {
           fetchMe()
-            .then((res) => setWallet(res.profile.fake_wallet_balance))
-            .catch(() => setWallet(null));
+            .then((res) => {
+              if (simStartedRef.current) return;
+              setWallet(res.profile.fake_wallet_balance);
+            })
+            .catch(() => {
+              if (!simStartedRef.current) setWallet(null);
+            });
         } else {
           setWallet(null);
         }
@@ -274,33 +365,77 @@ export default function GamePage() {
   }, []);
 
   useEffect(() => {
-    // Only load from backend.
-  }, [simulationActive, wallet]);
+    setMyBets(loadMyBets());
+  }, []);
 
   useEffect(() => {
-    const t = setInterval(() => {
-      setBets((prev) => {
-        const now = Date.now();
-        const betInr = [1000, 1000, 1500, 2000, 3000, 4000, 4907.28, 5752.21, 6000, 7000, 8000][
-          Math.floor(Math.random() * 11)
-        ]!;
-        const x = Math.random() < 0.33 ? (Math.random() * 2.2 + 1.01) : null;
-        const win = x ? Math.round(betInr * x * 100) / 100 : 0;
-        const status: BetRow["status"] = x ? "won" : "pending";
-        const row: BetRow = {
-          id: `r_${now}_${Math.random().toString(16).slice(2)}`,
-          player: maskedPlayer(),
-          betInr,
-          cashoutX: x ? Math.round(x * 100) / 100 : null,
-          winInr: win,
-          status,
-          createdAt: now,
-        };
-        return [row, ...prev].slice(0, 350);
-      });
-    }, 950);
-    return () => clearInterval(t);
+    if (sessionStorage.getItem("aviator_enter_splash") !== "1") return;
+    setBooting(true);
+    const timer = window.setTimeout(() => {
+      sessionStorage.removeItem("aviator_enter_splash");
+      setBooting(false);
+    }, 1800);
+    return () => window.clearTimeout(timer);
   }, []);
+
+  useEffect(() => {
+    const unlock = () => {
+      const audio = crashAudioRef.current;
+      window.removeEventListener("pointerdown", unlock);
+      if (!audio || !audio.paused) return;
+      const previous = audio.volume;
+      audio.volume = 0;
+      const pending = audio.play();
+      if (!pending) {
+        audio.volume = previous || 1;
+        return;
+      }
+      void pending
+        .then(() => {
+          audio.pause();
+          audio.currentTime = 0;
+          audio.volume = previous || 1;
+        })
+        .catch(() => {
+          audio.volume = previous || 1;
+        });
+    };
+    window.addEventListener("pointerdown", unlock);
+    return () => window.removeEventListener("pointerdown", unlock);
+  }, []);
+
+  useEffect(() => {
+    const crashAudio = crashAudioRef.current;
+    if (crashAudio && !musicEnabled && !crashAudio.paused) {
+      crashAudio.pause();
+      crashAudio.currentTime = 0;
+    }
+
+    const playCrash = (roundId: number, commit: boolean) => {
+      const key = String(roundId);
+      if (lastCrashSoundKeyRef.current === key) return;
+      if (!musicEnabledRef.current || !crashAudio || !sawFlyingRef.current) {
+        if (commit) lastCrashSoundKeyRef.current = key;
+        return;
+      }
+      lastCrashSoundKeyRef.current = key;
+      crashAudio.volume = 1;
+      crashAudio.currentTime = 0;
+      void crashAudio.play().catch(() => {});
+    };
+
+    if (payload?.status === "flying") {
+      sawFlyingRef.current = true;
+      return;
+    }
+
+    if (payload?.status !== "crashed") return;
+    const music = musicAudioRef.current;
+    if (music && musicEnabled && music.paused) {
+      void music.play().catch(() => {});
+    }
+    if (sawFlyingRef.current) playCrash(payload.round_id, true);
+  }, [payload, musicEnabled]);
 
   useEffect(() => {
     if (FORCE_AVIATOR_SIM) {
@@ -308,6 +443,7 @@ export default function GamePage() {
       setSimulationActive(true);
       setConnected(true);
       setLastError(null);
+      setWallet("10000.00");
       stopSimRef.current = startAviatorSimulation((p) => {
         setPayload(p);
         if (p.status === "crashed") crashFlashRef.current = Date.now();
@@ -395,7 +531,7 @@ export default function GamePage() {
         if (closed || !state) return;
         applyPayload(stateToPayload(state));
       })
-      .catch(() => {});
+      .catch(() => { });
 
     function connect() {
       if (closed) return;
@@ -409,7 +545,7 @@ export default function GamePage() {
         stopSimulation();
         void fetchMe()
           .then((res) => setWallet(res.profile.fake_wallet_balance))
-          .catch(() => {});
+          .catch(() => { });
       };
 
       ws.onclose = () => {
@@ -468,15 +604,16 @@ export default function GamePage() {
     payload?.status === "crashed" && dismissedCrashKey === crashKey(payload)
       ? null
       : payload;
-  const visualPayload = heldCrash ?? activePayload;
+  const visualPayload = heldCrash ?? activePayload ?? payload;
   const visualStatus = visualPayload?.status ?? "waiting";
 
   const multiplier = useMemo(() => {
-    if (!visualPayload) return 1.0;
+    if (!visualPayload || visualPayload.status === "waiting") return 1;
     if (visualPayload.status === "flying") return visualPayload.current_multiplier;
     if (visualPayload.status === "crashed") return visualPayload.crash_point;
-    return 1.0;
+    return 1;
   }, [visualPayload]);
+  multiplierRef.current = multiplier;
 
   const crashed = visualStatus === "crashed";
   const waiting = visualStatus === "waiting";
@@ -497,7 +634,7 @@ export default function GamePage() {
       setHeldCrash(null);
       setDismissedCrashKey(key);
       heldCrashTimerRef.current = null;
-    }, 2000);
+    }, CRASH_HOLD_MS);
   }, [payload]);
 
   useEffect(() => {
@@ -516,242 +653,356 @@ export default function GamePage() {
     lastCrashResolveKeyRef.current = key;
 
     setHistory((prev) => [payload.crash_point, ...prev].slice(0, 40));
-    setBets((prev) => {
-      let lostAmt = 0;
-      prev.forEach((r) => {
-        if (r.player === myUserLabel && r.status === "pending") {
-          lostAmt += r.betInr;
-        }
+    const roundRows = betsRef.current.filter((r) => r.roundId === payload.round_id);
+    const pendingMine = roundRows.filter((r) => r.panel && r.status === "pending");
+    if (pendingMine.length > 0) {
+      const lostAmt = pendingMine.reduce((sum, r) => sum + r.betInr, 0);
+      setLossOverlay({ show: true, amount: lostAmt });
+      setMyBets((h) => {
+        const next = [
+          ...pendingMine.map((r) => ({
+            id: `${r.id}_lost`,
+            roundId: payload.round_id,
+            panel: r.panel as 1 | 2,
+            stake: r.betInr,
+            cashoutX: null,
+            winInr: 0,
+            status: "lost" as const,
+            at: Date.now(),
+          })),
+          ...h,
+        ].slice(0, 80);
+        saveMyBets(next);
+        return next;
       });
-      if (lostAmt > 0) {
-        setLossOverlay({
-          show: true,
-          amount: lostAmt,
-        });
-      }
-
-      return prev.map((r) => {
-        if (r.status !== "pending") return r;
-        if (r.player === myUserLabel) {
-          return { ...r, status: "lost", cashoutX: null, winInr: 0 };
-        }
-        const win = Math.random() < 0.18;
-        const x = win ? Math.round((1.01 + Math.random() * 1.6) * 100) / 100 : null;
-        const winInr = x ? Math.round(r.betInr * x * 100) / 100 : 0;
-        return { ...r, status: win ? "won" : "lost", cashoutX: x, winInr };
-      });
+      setPanel1((p) => (p.placedRoundId === payload.round_id && p.cashedRoundId !== payload.round_id ? { ...p, lockedStake: null, placedRoundId: null } : p));
+      setPanel2((p) => (p.placedRoundId === payload.round_id && p.cashedRoundId !== payload.round_id ? { ...p, lockedStake: null, placedRoundId: null } : p));
+    }
+    const cashed = roundRows.filter((r) => r.status === "won");
+    const crowd = crowdCashed(payload.round_id, payload.crash_point);
+    setPreviousRound({
+      roundId: payload.round_id,
+      crashPoint: payload.crash_point,
+      rows: cashed,
+      totalPlayers: crowd.total,
+      cashedCount: crowd.cashed,
+      cashedAmount: crowd.amount,
     });
+    setBets(cashed);
     if (!simulationActive) {
       void fetchMe()
         .then((res) => setWallet(res.profile.fake_wallet_balance))
-        .catch(() => {});
+        .catch(() => { });
     }
-  }, [myUserLabel, payload, simulationActive]);
+  }, [payload, simulationActive]);
 
   useEffect(() => {
     if (!roundId) return;
-    if (lastRoundIdRef.current !== roundId) {
-      lastRoundIdRef.current = roundId;
-      simBetKeysRef.current.clear();
-      simCashoutKeysRef.current.clear();
-      setPanel1((p) => ({ ...p, lastActionError: null, cashedRoundId: null, placedRoundId: null }));
-      setPanel2((p) => ({ ...p, lastActionError: null, cashedRoundId: null, placedRoundId: null }));
-    }
-  }, [roundId]);
+    if (lastRoundIdRef.current === roundId) return;
+    lastRoundIdRef.current = roundId;
+    simBetKeysRef.current.clear();
+    simCashoutKeysRef.current.clear();
+
+    const promote = (p: BetPanelState): BetPanelState => {
+      if (p.queuedForNext && p.lockedStake != null) {
+        return { ...p, queuedForNext: false, placedRoundId: roundId, cashedRoundId: null, lastActionError: null };
+      }
+      return {
+        ...p,
+        queuedForNext: false,
+        placedRoundId: null,
+        cashedRoundId: null,
+        lockedStake: null,
+        lastActionError: null,
+      };
+    };
+
+    const n1 = promote(panel1Ref.current);
+    const n2 = promote(panel2Ref.current);
+    setPanel1(n1);
+    setPanel2(n2);
+
+    const userRows: BetRow[] = [];
+    const pushUser = (panel: 1 | 2, stake: number) => {
+      userRows.push({
+        id: `me_${panel}_${roundId}`,
+        player: myUserLabel,
+        betInr: stake,
+        cashoutX: null,
+        winInr: 0,
+        status: "pending",
+        createdAt: Date.now(),
+        panel,
+        roundId,
+        avatar: AVATARS[avatarIdxRef.current % AVATARS.length],
+      });
+    };
+    if (n1.placedRoundId === roundId && n1.lockedStake != null) pushUser(1, n1.lockedStake);
+    if (n2.placedRoundId === roundId && n2.lockedStake != null) pushUser(2, n2.lockedStake);
+    setBets([...userRows, ...buildRoundBets(roundId)]);
+
+    const submitQueued = async (panelIdx: 1 | 2, p: BetPanelState) => {
+      if (simulationActive) return;
+      if (p.placedRoundId !== roundId || p.lockedStake == null) return;
+      const stake = p.lockedStake;
+      const setP = panelIdx === 1 ? setPanel1 : setPanel2;
+      try {
+        const res = await placeBet({ round_id: roundId, bet_amount: stake.toFixed(2), slot: panelIdx });
+        setWallet(res.profile.fake_wallet_balance);
+        setLocalAdjust((a) => Math.round((a + stake) * 100) / 100);
+      } catch (e) {
+        setLocalAdjust((a) => Math.round((a + stake) * 100) / 100);
+        setP((cur) => ({
+          ...cur,
+          placedRoundId: null,
+          lockedStake: null,
+          lastActionError: e instanceof Error ? e.message : "Bet failed",
+        }));
+        setBets((prev) => prev.filter((r) => !(r.panel === panelIdx && r.roundId === roundId)));
+      }
+    };
+    void submitQueued(1, n1);
+    void submitQueued(2, n2);
+  }, [myUserLabel, roundId, simulationActive]);
+
+  const rememberBet = useCallback((row: MyBetRecord) => {
+    setMyBets((h) => {
+      const next = [row, ...h].slice(0, 80);
+      saveMyBets(next);
+      return next;
+    });
+  }, []);
 
   const doPlaceBet = useCallback(async (panelIdx: 1 | 2) => {
-    if (!roundId || status !== "waiting") return;
+    if (!roundId) return;
     const state = panelIdx === 1 ? panel1 : panel2;
-    if (state.placing) return;
-    if (state.placedRoundId === roundId) return;
+    const setP = panelIdx === 1 ? setPanel1 : setPanel2;
+    if (state.placing || state.cashing || state.queuedForNext) return;
+    const activeFlight = status === "flying" && state.placedRoundId === roundId && state.cashedRoundId !== roundId;
+    if (activeFlight) return;
+    if (status === "waiting" && state.placedRoundId === roundId) return;
+
     const amountN = parsePositiveNumber(state.amount);
-    if (!Number.isFinite(amountN) || amountN <= 0) {
-      (panelIdx === 1 ? setPanel1 : setPanel2)((p) => ({ ...p, lastActionError: "Invalid bet amount" }));
+    if (!Number.isFinite(amountN) || amountN < 1) {
+      setP((p) => ({ ...p, lastActionError: "Invalid bet amount" }));
       return;
     }
 
-    (panelIdx === 1 ? setPanel1 : setPanel2)((p) => ({ ...p, placing: true, lastActionError: null }));
+    const available = parsePositiveNumber(wallet ?? "0") + localAdjust;
+    if (!Number.isFinite(available) || available + 1e-9 < amountN) {
+      setP((p) => ({ ...p, lastActionError: "Insufficient balance" }));
+      return;
+    }
+
+    const queueOnly = status !== "waiting";
+    setP((p) => ({ ...p, placing: true, lastActionError: null }));
+
+    if (queueOnly) {
+      if (simulationActive) {
+        setWallet((w) => {
+          const bal = parsePositiveNumber(w ?? "0");
+          return (Math.round((bal - amountN) * 100) / 100).toFixed(2);
+        });
+      } else {
+        setLocalAdjust((a) => Math.round((a - amountN) * 100) / 100);
+      }
+      setP((p) => ({ ...p, placing: false, queuedForNext: true, lockedStake: amountN }));
+      return;
+    }
 
     if (simulationActive) {
-      try {
-        const dedupeKey = `${roundId}_${panelIdx}`;
-        if (simBetKeysRef.current.has(dedupeKey)) {
-          throw new Error("Already placed for this round");
-        }
-        simBetKeysRef.current.add(dedupeKey);
-        const bal = parsePositiveNumber(wallet ?? "0");
-        if (!Number.isFinite(bal) || bal + 1e-9 < amountN) {
-          simBetKeysRef.current.delete(dedupeKey);
-          throw new Error("Insufficient balance");
-        }
-        const nextBal = Math.round((bal - amountN) * 100) / 100;
-        setWallet(nextBal.toFixed(2));
-        (panelIdx === 1 ? setPanel1 : setPanel2)((p) => ({ ...p, placedRoundId: roundId }));
-        const now = Date.now();
-        setBets((prev) => [
-          {
-            id: `me_${panelIdx}_${now}`,
-            player: myUserLabel,
-            betInr: amountN,
-            cashoutX: null,
-            winInr: 0,
-            status: "pending",
-            createdAt: now,
-          },
-          ...prev,
-        ]);
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : "Bet failed";
-        const dedupeKey = `${roundId}_${panelIdx}`;
-        if (msg !== "Already placed for this round") simBetKeysRef.current.delete(dedupeKey);
-        (panelIdx === 1 ? setPanel1 : setPanel2)((p) => ({ ...p, lastActionError: msg }));
-      } finally {
-        (panelIdx === 1 ? setPanel1 : setPanel2)((p) => ({ ...p, placing: false }));
+      const dedupeKey = `${roundId}_${panelIdx}`;
+      if (simBetKeysRef.current.has(dedupeKey)) {
+        setP((p) => ({ ...p, placing: false, lastActionError: "Already placed for this round" }));
+        return;
       }
-      return;
-    }
-
-    try {
-      const res = await placeBet({ round_id: roundId, bet_amount: String(amountN) });
-      setWallet(res.profile.fake_wallet_balance);
-      // Live: one bet per user per round — both panels share active bet for cashout UX.
-      setPanel1((p) => ({ ...p, placedRoundId: roundId }));
-      setPanel2((p) => ({ ...p, placedRoundId: roundId }));
-      const now = Date.now();
+      simBetKeysRef.current.add(dedupeKey);
+      setWallet((w) => {
+        const bal = parsePositiveNumber(w ?? "0");
+        return (Math.round((bal - amountN) * 100) / 100).toFixed(2);
+      });
+      setP((p) => ({ ...p, placing: false, placedRoundId: roundId, lockedStake: amountN, cashedRoundId: null }));
       setBets((prev) => [
         {
-          id: `me_${panelIdx}_${now}`,
+          id: `me_${panelIdx}_${roundId}`,
           player: myUserLabel,
           betInr: amountN,
           cashoutX: null,
           winInr: 0,
           status: "pending",
-          createdAt: now,
+          createdAt: Date.now(),
+          panel: panelIdx,
+          roundId,
+          avatar: AVATARS[avatarIdxRef.current % AVATARS.length],
         },
-        ...prev,
+        ...prev.filter((r) => !(r.panel === panelIdx && r.roundId === roundId)),
       ]);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Bet failed";
-      (panelIdx === 1 ? setPanel1 : setPanel2)((p) => ({ ...p, lastActionError: msg }));
-    } finally {
-      (panelIdx === 1 ? setPanel1 : setPanel2)((p) => ({ ...p, placing: false }));
-    }
-  }, [myUserLabel, panel1, panel2, roundId, simulationActive, status, wallet]);
-
-  const doCashout = useCallback(async (panelIdx: 1 | 2) => {
-    if (!roundId || status !== "flying") return;
-    const state = panelIdx === 1 ? panel1 : panel2;
-    if (state.cashing) return;
-    if (state.cashedRoundId === roundId) return;
-    const hasBet =
-      panel1.placedRoundId === roundId || panel2.placedRoundId === roundId;
-    if (!simulationActive && !hasBet) {
-      (panelIdx === 1 ? setPanel1 : setPanel2)((p) => ({
-        ...p,
-        lastActionError: "Place a bet first",
-      }));
-      return;
-    }
-
-    (panelIdx === 1 ? setPanel1 : setPanel2)((p) => ({ ...p, cashing: true, lastActionError: null }));
-
-    if (simulationActive) {
-      const dedupeKey = `${roundId}_${panelIdx}`;
-      try {
-        if (simCashoutKeysRef.current.has(dedupeKey)) {
-          throw new Error("Already cashed this round");
-        }
-        simCashoutKeysRef.current.add(dedupeKey);
-        const x = multiplier;
-        let payout = 0;
-        let found = false;
-        setBets((prev) => {
-          const idx = prev.findIndex((r) => r.player === myUserLabel && r.status === "pending");
-          if (idx < 0) return prev;
-          found = true;
-          const row = prev[idx]!;
-          payout = Math.round(row.betInr * x * 100) / 100;
-          const updated = {
-            ...row,
-            status: "won" as const,
-            cashoutX: Math.round(x * 100) / 100,
-            winInr: payout,
-          };
-          const copy = prev.slice();
-          copy[idx] = updated;
-          return copy;
-        });
-        if (!found) {
-          simCashoutKeysRef.current.delete(dedupeKey);
-          throw new Error("No active bet");
-        }
-        setWallet((wp) => {
-          const bal = parsePositiveNumber(wp ?? "0");
-          return (Math.round((bal + payout) * 100) / 100).toFixed(2);
-        });
-        (panelIdx === 1 ? setPanel1 : setPanel2)((p) => ({ ...p, cashedRoundId: roundId }));
-        setWinOverlay({
-          show: true,
-          amount: payout,
-          multiplier: x,
-        });
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : "Cashout failed";
-        if (msg !== "Already cashed this round") simCashoutKeysRef.current.delete(dedupeKey);
-        (panelIdx === 1 ? setPanel1 : setPanel2)((p) => ({ ...p, lastActionError: msg }));
-      } finally {
-        (panelIdx === 1 ? setPanel1 : setPanel2)((p) => ({ ...p, cashing: false }));
-      }
       return;
     }
 
     try {
-      const res = await cashout({ round_id: roundId });
+      const res = await placeBet({ round_id: roundId, bet_amount: amountN.toFixed(2), slot: panelIdx });
       setWallet(res.profile.fake_wallet_balance);
-      setPanel1((p) => ({ ...p, cashedRoundId: roundId }));
-      setPanel2((p) => ({ ...p, cashedRoundId: roundId }));
-      const x = Number(res.bet.cashout_multiplier ?? multiplier);
-      const winInr = Number(res.bet.payout_amount ?? 0);
-      setBets((prev) => {
-        const idx = prev.findIndex((r) => r.player === myUserLabel && r.status === "pending");
-        if (idx < 0) return prev;
-        const row = prev[idx]!;
-        const updated = {
-          ...row,
-          status: "won" as const,
-          cashoutX: Math.round(x * 100) / 100,
-          winInr: Math.round(winInr * 100) / 100,
-        };
-        const copy = prev.slice();
-        copy[idx] = updated;
-        return copy;
-      });
-      if (winInr > 0) {
-        setWinOverlay({
-          show: true,
-          amount: winInr,
-          multiplier: x,
+      setP((p) => ({ ...p, placing: false, placedRoundId: roundId, lockedStake: amountN, cashedRoundId: null }));
+      setBets((prev) => [
+        {
+          id: `me_${panelIdx}_${roundId}`,
+          player: myUserLabel,
+          betInr: amountN,
+          cashoutX: null,
+          winInr: 0,
+          status: "pending",
+          createdAt: Date.now(),
+          panel: panelIdx,
+          roundId,
+          avatar: AVATARS[avatarIdxRef.current % AVATARS.length],
+        },
+        ...prev.filter((r) => !(r.panel === panelIdx && r.roundId === roundId)),
+      ]);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Bet failed";
+      setP((p) => ({ ...p, placing: false, lastActionError: msg }));
+    }
+  }, [localAdjust, myUserLabel, panel1, panel2, roundId, simulationActive, status, wallet]);
+
+  const doCancel = useCallback(async (panelIdx: 1 | 2) => {
+    const state = panelIdx === 1 ? panel1 : panel2;
+    const setP = panelIdx === 1 ? setPanel1 : setPanel2;
+    const stake = state.lockedStake ?? 0;
+
+    if (state.queuedForNext) {
+      if (stake > 0) {
+        if (simulationActive) {
+          setWallet((w) => {
+            const bal = parsePositiveNumber(w ?? "0");
+            return (Math.round((bal + stake) * 100) / 100).toFixed(2);
+          });
+        } else {
+          setLocalAdjust((a) => Math.round((a + stake) * 100) / 100);
+        }
+      }
+      setP((p) => ({ ...p, queuedForNext: false, lockedStake: null, lastActionError: null }));
+      return;
+    }
+
+    if (!roundId || status !== "waiting" || state.placedRoundId !== roundId) return;
+
+    if (simulationActive) {
+      simBetKeysRef.current.delete(`${roundId}_${panelIdx}`);
+      if (stake > 0) {
+        setWallet((w) => {
+          const bal = parsePositiveNumber(w ?? "0");
+          return (Math.round((bal + stake) * 100) / 100).toFixed(2);
         });
       }
+      setP((p) => ({ ...p, placedRoundId: null, lockedStake: null, lastActionError: null }));
+      setBets((prev) => prev.filter((r) => !(r.panel === panelIdx && r.roundId === roundId)));
+      return;
+    }
+
+    setP((p) => ({ ...p, placing: true, lastActionError: null }));
+    try {
+      const res = await cancelBet({ round_id: roundId, slot: panelIdx });
+      setWallet(res.profile.fake_wallet_balance);
+      setP((p) => ({ ...p, placing: false, placedRoundId: null, lockedStake: null }));
+      setBets((prev) => prev.filter((r) => !(r.panel === panelIdx && r.roundId === roundId)));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Cancel failed";
+      setP((p) => ({ ...p, placing: false, lastActionError: msg }));
+    }
+  }, [panel1, panel2, roundId, simulationActive, status]);
+
+  const doCashout = useCallback(async (panelIdx: 1 | 2) => {
+    if (!roundId || status !== "flying") return;
+    const state = panelIdx === 1 ? panel1 : panel2;
+    const setP = panelIdx === 1 ? setPanel1 : setPanel2;
+    if (state.cashing || state.cashedRoundId === roundId) return;
+    if (state.placedRoundId !== roundId) {
+      setP((p) => ({ ...p, lastActionError: "Place a bet first" }));
+      return;
+    }
+
+    const x = multiplierRef.current;
+    const stake = state.lockedStake ?? parsePositiveNumber(state.amount);
+    const lockedX = Math.round(x * 100) / 100;
+    const payout = Math.round((Number.isFinite(stake) ? stake : 0) * lockedX * 100) / 100;
+
+    setP((p) => ({ ...p, cashing: true, cashedRoundId: roundId, lastActionError: null }));
+    setBets((prev) => {
+      const idx = prev.findIndex((r) => r.panel === panelIdx && r.roundId === roundId && r.status === "pending");
+      if (idx < 0) return prev;
+      const copy = prev.slice();
+      copy[idx] = { ...copy[idx]!, status: "won", cashoutX: lockedX, winInr: payout };
+      return copy;
+    });
+    setWinOverlay({ show: true, amount: payout, multiplier: lockedX });
+    rememberBet({
+      id: `win_${panelIdx}_${roundId}_${Date.now()}`,
+      roundId,
+      panel: panelIdx,
+      stake: Number.isFinite(stake) ? stake : 0,
+      cashoutX: lockedX,
+      winInr: payout,
+      status: "won",
+      at: Date.now(),
+    });
+    if (soundEnabledRef.current) playTone(660, 0.08);
+
+    if (simulationActive) {
+      const dedupeKey = `${roundId}_${panelIdx}`;
+      if (!simCashoutKeysRef.current.has(dedupeKey)) {
+        simCashoutKeysRef.current.add(dedupeKey);
+        setWallet((wp) => {
+          const bal = parsePositiveNumber(wp ?? "0");
+          return (Math.round((bal + payout) * 100) / 100).toFixed(2);
+        });
+      }
+      setP((p) => ({ ...p, cashing: false }));
+      return;
+    }
+
+    try {
+      const res = await cashout({ round_id: roundId, slot: panelIdx });
+      setWallet(res.profile.fake_wallet_balance);
+      const serverX = Number(res.bet.cashout_multiplier ?? lockedX);
+      const serverWin = Number(res.bet.payout_amount ?? payout);
+      setWinOverlay({ show: true, amount: serverWin, multiplier: serverX });
+      setBets((prev) => {
+        const idx = prev.findIndex((r) => r.panel === panelIdx && r.roundId === roundId);
+        if (idx < 0) return prev;
+        const copy = prev.slice();
+        copy[idx] = {
+          ...copy[idx]!,
+          status: "won",
+          cashoutX: Math.round(serverX * 100) / 100,
+          winInr: Math.round(serverWin * 100) / 100,
+        };
+        return copy;
+      });
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Cashout failed";
-      (panelIdx === 1 ? setPanel1 : setPanel2)((p) => ({ ...p, lastActionError: msg }));
+      setP((p) => ({ ...p, cashedRoundId: null, lastActionError: msg }));
+      setBets((prev) => {
+        const idx = prev.findIndex((r) => r.panel === panelIdx && r.roundId === roundId);
+        if (idx < 0) return prev;
+        const copy = prev.slice();
+        copy[idx] = { ...copy[idx]!, status: "pending", cashoutX: null, winInr: 0 };
+        return copy;
+      });
     } finally {
-      (panelIdx === 1 ? setPanel1 : setPanel2)((p) => ({ ...p, cashing: false }));
+      setP((p) => ({ ...p, cashing: false }));
     }
-  }, [multiplier, myUserLabel, panel1, panel2, roundId, simulationActive, status]);
+  }, [panel1, panel2, rememberBet, roundId, simulationActive, status]);
 
   const maybeAutoBet = useCallback(
     async (panelIdx: 1 | 2) => {
       const p = panelIdx === 1 ? panel1 : panel2;
       if (p.mode !== "auto" || !p.autoBetEnabled) return;
       if (!roundId) return;
-      if (p.placedRoundId === roundId) return;
-      // Live backend: only one bet per user per round (panel 1 places, panel 2 skips).
-      if (!simulationActive && panelIdx === 2) return;
+      if (p.placedRoundId === roundId || p.queuedForNext) return;
       await doPlaceBet(panelIdx);
     },
-    [doPlaceBet, panel1, panel2, roundId, simulationActive]
+    [doPlaceBet, panel1, panel2, roundId]
   );
 
   const maybeAutoCashout = useCallback(
@@ -760,9 +1011,7 @@ export default function GamePage() {
       if (p.mode !== "auto" || !p.autoCashoutEnabled) return;
       if (!roundId) return;
       if (p.cashedRoundId === roundId) return;
-      const hasBet =
-        panel1.placedRoundId === roundId || panel2.placedRoundId === roundId;
-      if (!hasBet) return;
+      if (p.placedRoundId !== roundId) return;
       const target = parsePositiveNumber(p.autoCashoutAt);
       if (!Number.isFinite(target) || target <= 1) return;
       if (currentX >= target) await doCashout(panelIdx);
@@ -788,38 +1037,37 @@ export default function GamePage() {
     if (!payload || payload.status !== "flying" || !roundId) return;
     void maybeAutoCashout(1, payload.current_multiplier);
     void maybeAutoCashout(2, payload.current_multiplier);
+    setBets((prev) => settleBotsAtMultiplier(prev, payload.round_id, payload.current_multiplier));
   }, [maybeAutoCashout, payload, roundId]);
 
-  const visibleHistoryPills = useMemo(() => history.slice(0, 8), [history]);
+  const visibleHistoryPills = useMemo(() => history.slice(0, 16), [history]);
   const waitingSeconds = 6.0;
   const waitingPct = useMemo(() => {
     if (waitingLeft == null) return 0;
     return clamp(((waitingSeconds - waitingLeft) / waitingSeconds) * 100, 0, 100);
   }, [waitingLeft]);
 
-  const betCountLabel = useMemo(() => {
-    const n = Math.max(0, Math.min(9999, bets.length));
-    return `${n}/${Math.max(n, 2465)} Bets`;
-  }, [bets.length]);
+  const roundBook = useMemo(() => (roundId == null ? bets : bets.filter((b) => b.roundId === roundId)), [bets, roundId]);
+  const cashedRows = useMemo(() => roundBook.filter((b) => b.status === "won"), [roundBook]);
 
   const filteredBets = useMemo(() => {
-    if (betsTab === "all") return bets;
-    if (betsTab === "previous") return bets.filter((b) => b.status !== "pending");
-    return bets
-      .filter((b) => b.status === "won")
-      .slice()
-      .sort((a, b) => b.winInr - a.winInr);
-  }, [bets, betsTab]);
+    if (betsTab === "previous") return previousRound?.rows ?? [];
+    if (betsTab === "top") {
+      return [...cashedRows].sort((a, b) => b.winInr - a.winInr);
+    }
+    return roundBook;
+  }, [betsTab, cashedRows, previousRound, roundBook]);
 
-  const totalWinInr = useMemo(() => {
-    if (betsTab !== "all") return null;
-    const sum = bets.reduce((acc, r) => acc + (r.status === "won" ? r.winInr : 0), 0);
-    return sum;
-  }, [bets, betsTab]);
+  const shownWallet = useMemo(() => {
+    const n = parsePositiveNumber(wallet ?? "");
+    if (!Number.isFinite(n)) return wallet;
+    return (Math.round((n + localAdjust) * 100) / 100).toFixed(2);
+  }, [localAdjust, wallet]);
 
-  const livePlayersLabel = useMemo(
-    () => arenaPlayersForRound(roundId).toLocaleString("en-IN"),
-    [roundId]
+  const livePlayersLabel = useMemo(() => crowdTotal(roundId).toLocaleString("en-IN"), [roundId]);
+  const liveCrowd = useMemo(
+    () => crowdCashed(roundId, status === "flying" || status === "crashed" ? multiplier : 1),
+    [multiplier, roundId, status],
   );
 
   const persistName = useCallback((name: string) => {
@@ -837,6 +1085,15 @@ export default function GamePage() {
     setMusicEnabled(v);
     try {
       localStorage.setItem(LS_MUSIC, v ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const setSoundFlag = useCallback((v: boolean) => {
+    setSoundEnabled(v);
+    try {
+      localStorage.setItem(LS_SOUND, v ? "1" : "0");
     } catch {
       /* ignore */
     }
@@ -865,9 +1122,11 @@ export default function GamePage() {
   return (
     <div className={["h-dvh w-full overflow-hidden text-zinc-50", APP_CHROME_BG].join(" ")}>
       <audio ref={musicAudioRef} src={AVIATOR_MUSIC_SRC} preload="auto" />
+      <audio ref={crashAudioRef} src={PLANE_CRASH_SRC} preload="auto" />
 
       <div className="mx-auto h-full w-full max-w-[430px] min-w-0">
         <div className="relative flex h-full w-full min-w-0 flex-col overflow-hidden bg-[#050506] sm:rounded-[28px] sm:shadow-[0_24px_70px_-30px_rgba(0,0,0,0.55)] sm:ring-1 sm:ring-white/10">
+          {booting ? <SpribeSplash /> : null}
           <div className="sticky top-0 z-20 border-b border-white/[0.07] bg-[#050506]/96 backdrop-blur-sm">
             <div className="flex items-center justify-between gap-3 px-3 py-2">
               <div className="min-w-[72px] shrink-0 text-[17px] font-extrabold italic tracking-tight text-[#e93d52]">Aviator</div>
@@ -875,14 +1134,17 @@ export default function GamePage() {
                 <div className="flex max-w-[148px] items-center gap-1.5 rounded-full bg-[#16171c] px-2.5 py-1.5 ring-1 ring-white/10">
                   <span className={["h-2 w-2 shrink-0 rounded-full", connected ? "bg-emerald-400" : "bg-zinc-600"].join(" ")} />
                   <span className="truncate text-[13px] font-bold tracking-tight text-[#39ef65] tabular-nums">
-                    {wallet != null ? `${wallet} INR` : "Loading..."}
+                    {shownWallet != null ? `${shownWallet} INR` : "Loading..."}
                   </span>
                 </div>
                 <button
                   type="button"
                   className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-[#16171c] text-white/80 ring-1 ring-white/10 active:opacity-95"
                   aria-label="Menu"
-                  onClick={() => setMenuOpen(true)}
+                  onClick={() => {
+                    setMenuPage("root");
+                    setMenuOpen(true);
+                  }}
                 >
                   <MenuLinesIcon />
                 </button>
@@ -890,23 +1152,22 @@ export default function GamePage() {
             </div>
 
             <div className="px-3 pb-1.5">
-              <div className="flex items-center gap-1.5 overflow-hidden">
-                <div className="no-scrollbar flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+              <div className="flex items-center gap-1 overflow-hidden">
+                <div className="no-scrollbar flex h-7 min-w-0 flex-1 items-center overflow-x-auto rounded-full bg-[#141518] px-1">
                   {visibleHistoryPills.map((x, i) => {
-                    const hot =
-                      x < 2 ? "text-[#78c8ff]" : x < 10 ? "text-[#d4b8ff]" : "text-[#ff7b9d]";
+                    const hot = x < 2 ? "text-[#6ec1ff]" : x < 10 ? "text-[#c9a6ff]" : "text-[#ff5d7a]";
                     return (
                       <span
                         key={`${i}_${x}`}
-                        className={[
-                          "rounded-full bg-[#1a1c22] px-2 py-[3px] text-[10px] font-bold tabular-nums ring-1 ring-white/[0.08]",
-                          hot,
-                        ].join(" ")}
+                        className={["shrink-0 px-1.5 text-[13px] font-bold leading-none tabular-nums", hot].join(" ")}
                       >
                         {formatX(x)}
                       </span>
                     );
                   })}
+                  {visibleHistoryPills.length === 0 ? (
+                    <span className="px-2 text-[12px] font-semibold text-white/35">Waiting for results</span>
+                  ) : null}
                 </div>
                 <button
                   type="button"
@@ -953,39 +1214,39 @@ export default function GamePage() {
                     </div>
                   ) : null}
 
-                  {!waiting ? (
-                    <div className="pointer-events-none absolute inset-0 z-[5] flex items-center justify-center">
-                      <div className="text-center">
-                        {crashed ? (
-                          <div className="mb-1 text-[15px] font-black tracking-tight text-white/90">FLEW AWAY!</div>
-                        ) : null}
-                        {!waiting ? (
-                          <div
-                            id="aviator-live-multiplier"
-                            className={[
-                              "relative text-[52px] font-black leading-none tracking-tight sm:text-[60px]",
-                              "drop-shadow-[0_2px_0_rgba(0,0,0,0.9)] drop-shadow-[0_4px_28px_rgba(0,0,0,0.75)]",
-                              crashed ? "text-[#ff3b5c]" : "text-white",
-                            ].join(" ")}
-                          >
-                            {formatX(multiplier)}
-                          </div>
-                        ) : null}
+                  <div className="pointer-events-none absolute inset-0 z-[5] flex items-center justify-center">
+                    <div className="text-center">
+                      {crashed ? (
+                        <div className="mb-1 text-[15px] font-black tracking-tight text-white/90">FLEW AWAY!</div>
+                      ) : null}
+                      <div
+                        id="aviator-live-multiplier"
+                        className={[
+                          "relative text-[52px] font-black leading-none tracking-tight sm:text-[60px]",
+                          "drop-shadow-[0_2px_0_rgba(0,0,0,0.9)] drop-shadow-[0_4px_28px_rgba(0,0,0,0.75)]",
+                          crashed ? "text-[#ff3b5c]" : "text-white",
+                        ].join(" ")}
+                      >
+                        {formatX(waiting ? 1 : multiplier)}
                       </div>
+                      {waiting && waitingLeft != null ? (
+                        <div className="mt-2 text-[15px] font-black tabular-nums text-white/90">
+                          Next round in {waitingLeft.toFixed(1)}s
+                        </div>
+                      ) : null}
                     </div>
-                  ) : null}
+                  </div>
 
                   {animationEnabled ? (
                     <div className="pointer-events-none absolute right-2 bottom-2 z-[3] flex items-center rounded-full bg-black/50 px-1.5 py-1 ring-1 ring-white/10 backdrop-blur-[2px]">
                       <div className="flex -space-x-1.5 pr-1.5">
-                        {["from-sky-400 to-indigo-500", "from-fuchsia-400 to-orange-400", "from-emerald-400 to-cyan-500"].map(
-                          (grad, i) => (
-                            <span
-                              key={`lp_${i}`}
-                              className={["h-4 w-4 rounded-full ring-1 ring-black/55 bg-linear-to-br", grad].join(" ")}
-                            />
-                          )
-                        )}
+                        {AVATARS.slice(0, 4).map((src) => (
+                          <span
+                            key={src}
+                            className="h-4 w-4 rounded-full bg-cover bg-center ring-1 ring-black/55"
+                            style={{ backgroundImage: `url("${src}")` }}
+                          />
+                        ))}
                       </div>
                       <span className="text-[9px] font-bold tabular-nums text-white/85">{livePlayersLabel}</span>
                     </div>
@@ -1037,10 +1298,12 @@ export default function GamePage() {
               <BetPanel
                 state={panel1}
                 setState={setPanel1}
-                canBet={status === "waiting" && !!roundId}
+                canBet={!!roundId}
                 canCashout={status === "flying" && !!roundId}
+                liveMultiplier={multiplier}
                 onBet={() => void doPlaceBet(1)}
                 onCashout={() => void doCashout(1)}
+                onCancel={() => void doCancel(1)}
                 toggleAction={!showPanel2 ? { label: "+", onClick: () => setShowPanel2(true) } : undefined}
                 roundId={roundId}
                 status={status}
@@ -1049,10 +1312,12 @@ export default function GamePage() {
                 <BetPanel
                   state={panel2}
                   setState={setPanel2}
-                  canBet={status === "waiting" && !!roundId}
+                  canBet={!!roundId}
                   canCashout={status === "flying" && !!roundId}
+                  liveMultiplier={multiplier}
                   onBet={() => void doPlaceBet(2)}
                   onCashout={() => void doCashout(2)}
+                  onCancel={() => void doCancel(2)}
                   toggleAction={{ label: "−", onClick: () => setShowPanel2(false) }}
                   roundId={roundId}
                   status={status}
@@ -1062,8 +1327,8 @@ export default function GamePage() {
 
             <div className="mt-3 px-3">
               <div className="rounded-[22px] bg-[#12121a] ring-1 ring-white/10">
-                <div className="flex items-center justify-between px-3 pt-3">
-                  <div className="flex items-center gap-2">
+                <div className="flex items-start gap-2 px-3 pt-3">
+                  <div className="flex shrink-0 items-center gap-1.5">
                     <button type="button" onClick={() => setBetsTab("all")} className={["rounded-full px-3 py-1.5 text-xs font-bold ring-1 ring-white/10", betsTab === "all" ? "bg-white/10 text-white" : "bg-white/5 text-white/65"].join(" ")}>
                       All Bets
                     </button>
@@ -1075,17 +1340,24 @@ export default function GamePage() {
                     </button>
                   </div>
 
-                  <div className="text-right text-xs">
-                    <div className="font-bold text-white/80">{betsTab === "all" ? betCountLabel : ""}</div>
-                    <div className="text-[11px] font-semibold text-white/55">
-                      {totalWinInr != null ? (
-                        <>
-                          <span className="tabular-nums">{fmtINR(totalWinInr)}</span> <span className="opacity-80">Total win INR</span>
-                        </>
-                      ) : (
-                        <span className="opacity-70"> </span>
-                      )}
-                    </div>
+                  <div className="min-w-0 flex-1 pt-0.5 text-right text-[11px] leading-tight">
+                    {betsTab === "previous" && previousRound ? (
+                      <>
+                        <div className="font-black text-[#ff5d7a]">Crashed at {formatX(previousRound.crashPoint)}</div>
+                        <div className="mt-0.5 font-semibold text-white/75">
+                          {previousRound.cashedCount.toLocaleString("en-IN")} out of {previousRound.totalPlayers.toLocaleString("en-IN")} players cashed out
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="font-semibold text-white/90">
+                          {liveCrowd.cashed.toLocaleString("en-IN")} out of {liveCrowd.total.toLocaleString("en-IN")} players cashed out
+                        </div>
+                        <div className="mt-0.5 font-semibold tabular-nums text-[#39ef65]">
+                          {fmtINR(liveCrowd.amount)} INR
+                        </div>
+                      </>
+                    )}
                   </div>
                 </div>
 
@@ -1098,16 +1370,22 @@ export default function GamePage() {
                   </div>
                 </div>
 
-                <div className="max-h-[330px] overflow-y-auto pb-2 pt-2">
+                <div className="no-scrollbar max-h-[420px] overflow-y-auto pb-2 pt-2">
+                  {betsTab === "previous" && !previousRound ? (
+                    <div className="px-4 py-6 text-center text-xs font-semibold text-white/45">No completed round yet</div>
+                  ) : null}
                   {filteredBets.slice(0, 80).map((r) => {
                     const highlight = r.status === "won";
                     return (
                       <div key={r.id} className="px-3">
                         <div className={["grid grid-cols-[1.2fr_0.9fr_0.6fr_0.9fr] items-center gap-2 rounded-2xl px-3 py-2.5 text-sm ring-1", highlight ? "bg-emerald-500/12 ring-emerald-500/20" : "bg-white/5 ring-white/10"].join(" ")}>
-                          <div className="min-w-0 truncate text-xs font-bold text-white/80">{r.player}</div>
-                          <div className="text-right text-xs font-bold tabular-nums text-white/80">{fmtINR(r.betInr)}</div>
-                          <div className="text-right text-xs font-black tabular-nums text-white/70">{r.cashoutX ? formatX(r.cashoutX) : ""}</div>
-                          <div className="text-right text-xs font-black tabular-nums text-white/85">{r.winInr ? fmtINR(r.winInr) : "0.00"}</div>
+                          <div className="flex min-w-0 items-center gap-2">
+                            <PlayerFace src={r.avatar} />
+                            <span className="truncate text-xs font-semibold text-white/80">{r.player}</span>
+                          </div>
+                          <div className="text-right text-xs font-semibold tabular-nums text-white/80">{fmtINR(r.betInr)}</div>
+                          <div className={["text-right text-xs font-semibold tabular-nums", r.cashoutX ? "text-[#7ec8ff]" : "text-white/35"].join(" ")}>{r.cashoutX ? formatX(r.cashoutX) : "—"}</div>
+                          <div className={["text-right text-xs font-semibold tabular-nums", r.winInr ? "text-[#39ef65]" : "text-white/45"].join(" ")}>{r.winInr ? fmtINR(r.winInr) : "0.00"}</div>
                         </div>
                       </div>
                     );
@@ -1117,7 +1395,52 @@ export default function GamePage() {
             </div>
           </div>
 
-          {menuOpen ? (
+          {menuOpen && menuPage === "history" ? (
+            <div className="absolute inset-0 z-[46] flex items-start justify-center bg-black/55 px-3 pt-10">
+              <div className="flex max-h-[82%] w-full flex-col rounded-[18px] bg-[#1b1c22] p-4 ring-1 ring-white/10" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-center justify-between">
+                  <div className="text-[15px] font-semibold tracking-wide text-white/90">MY BET HISTORY</div>
+                  <button type="button" aria-label="Close" onClick={() => setMenuPage("root")} className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10">
+                    <CloseIcon />
+                  </button>
+                </div>
+                <div className="mt-4 grid grid-cols-[1.1fr_0.9fr_0.6fr_1fr] gap-2 px-1 text-[11px] font-medium text-white/45">
+                  <div>Date</div>
+                  <div className="text-right">Bet INR</div>
+                  <div className="text-right">X</div>
+                  <div className="text-right">Cash out INR</div>
+                </div>
+                <div className="mt-2 min-h-0 flex-1 space-y-1.5 overflow-y-auto">
+                  {myBets.length === 0 ? <p className="px-1 py-6 text-center text-sm text-white/45">No bets yet. Place a bet and it will show up here.</p> : null}
+                  {myBets.slice(0, historyLimit).map((b) => {
+                    const stamp = formatBetStamp(b.at);
+                    const hot = (b.cashoutX ?? 0) < 2 ? "text-sky-300" : (b.cashoutX ?? 0) < 10 ? "text-violet-300" : "text-rose-300";
+                    return (
+                      <div key={b.id} className={["grid grid-cols-[1.1fr_0.9fr_0.6fr_1fr] items-center gap-2 rounded-lg px-2 py-2 text-[12px]", b.status === "won" ? "bg-[#1f6b32]" : "bg-white/[0.03]"].join(" ")}>
+                        <div className="leading-tight text-white/80">
+                          <div>{stamp.time}</div>
+                          <div className="text-[10px] text-white/55">{stamp.date}</div>
+                        </div>
+                        <div className="text-right font-medium tabular-nums text-white">{fmtINR(b.stake)}</div>
+                        <div className={["text-right font-semibold tabular-nums", b.cashoutX ? hot : "text-white/30"].join(" ")}>{b.cashoutX ? formatX(b.cashoutX) : "—"}</div>
+                        <div className="flex items-center justify-end gap-1.5 text-white">
+                          <span className="tabular-nums">{b.status === "won" ? fmtINR(b.winInr) : ""}</span>
+                          <span className="text-[13px] text-[#39ef65]" aria-hidden>✔</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                {myBets.length > historyLimit ? (
+                  <button type="button" onClick={() => setHistoryLimit((n) => n + 10)} className="mx-auto mt-3 rounded-full bg-white/10 px-6 py-2 text-sm text-white/80">
+                    Load more
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
+          {menuOpen && menuPage !== "history" ? (
             <div
               className="absolute inset-0 z-[45] bg-black/60 px-4 pt-14 backdrop-blur-[2px]"
               onClick={() => setMenuOpen(false)}
@@ -1132,68 +1455,117 @@ export default function GamePage() {
               >
                 <div className="flex items-center justify-between">
                   <div id="menu-title" className="text-[15px] font-extrabold text-white/95">
-                    Menu
+                    {menuPage === "root" ? "Menu" : menuPage === "avatar" ? "Change Avatar" : menuPage === "free" ? "Free Bets" : menuPage === "limits" ? "Game Limits" : menuPage === "howto" ? "How to Play" : "Game Rules"}
                   </div>
                   <button
                     type="button"
                     className="flex h-9 w-9 items-center justify-center rounded-2xl bg-white/[0.06] text-lg leading-none text-white/70 ring-1 ring-white/10"
-                    onClick={() => setMenuOpen(false)}
-                    aria-label="Close menu"
+                    onClick={() => (menuPage === "root" ? setMenuOpen(false) : setMenuPage("root"))}
+                    aria-label={menuPage === "root" ? "Close menu" : "Back"}
                   >
                     <CloseIcon />
                   </button>
                 </div>
 
-                <div className="mt-5">
-                  <label className="block text-[11px] font-semibold text-white/45" htmlFor="aviator-display-name">
-                    Name
-                  </label>
-                  <input
-                    id="aviator-display-name"
-                    type="text"
-                    autoComplete="nickname"
-                    className="mt-1.5 w-full rounded-[14px] border border-white/[0.08] bg-black/35 px-3 py-2.5 text-sm font-semibold text-white outline-none ring-0 placeholder:text-white/30 focus:border-[#28a909]/55 focus:ring-[3px] focus:ring-[#28a909]/15"
-                    value={displayName}
-                    placeholder="Enter a name"
-                    onChange={(e) => setDisplayName(e.target.value)}
-                    onBlur={handleNameBlur}
-                  />
-                </div>
+                {menuPage === "root" ? (
+                  <div className="mt-4 max-h-[70dvh] space-y-1 overflow-y-auto">
+                    <MenuRow label="Change Avatar" onClick={() => setMenuPage("avatar")} />
+                    <MenuToggle label="Sound" on={soundEnabled} onClick={() => setSoundFlag(!soundEnabled)} />
+                    <MenuToggle label="Music" on={musicEnabled} onClick={() => setMusicFlag(!musicEnabled)} />
+                    <MenuToggle label="Animation" on={animationEnabled} onClick={() => setAnimationFlag(!animationEnabled)} />
+                    <MenuRow label="Free Bets" onClick={() => setMenuPage("free")} />
+                    <MenuRow label="My Bet History" onClick={() => setMenuPage("history")} />
+                    <MenuRow label="Game Limits" onClick={() => setMenuPage("limits")} />
+                    <MenuRow label="How to Play" onClick={() => setMenuPage("howto")} />
+                    <MenuRow label="Game Rules" onClick={() => setMenuPage("rules")} />
+                  </div>
+                ) : null}
 
-                <div className="mt-5 space-y-3 border-t border-white/[0.08] pt-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-[13px] font-bold text-white/85">Music</div>
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={musicEnabled}
-                      aria-label="Music"
-                      onClick={() => setMusicFlag(!musicEnabled)}
-                      className={[
-                        "inline-flex h-8 w-[52px] shrink-0 items-center rounded-full p-[3px] ring-1 ring-white/10 transition-colors",
-                        musicEnabled ? "justify-end bg-[#28a909]" : "justify-start bg-white/[0.16]",
-                      ].join(" ")}
-                    >
-                      <span className="h-6 w-6 rounded-full bg-white shadow" />
-                    </button>
+                {menuPage === "avatar" ? (
+                  <div className="mt-4">
+                    <div className="grid grid-cols-4 gap-3">
+                      {AVATARS.map((src, i) => (
+                        <button
+                          key={src}
+                          type="button"
+                          aria-label={`Avatar ${i + 1}`}
+                          onClick={() => {
+                            setAvatarIdx(i);
+                            try {
+                              localStorage.setItem(LS_AVATAR, String(i));
+                            } catch {
+                              /* ignore */
+                            }
+                          }}
+                          className={[
+                            "mx-auto h-12 w-12 rounded-full bg-cover bg-center ring-2",
+                            avatarIdx === i ? "ring-white" : "ring-transparent",
+                          ].join(" ")}
+                          style={{ backgroundImage: `url("${src}")` }}
+                        />
+                      ))}
+                    </div>
+                    <label className="mt-4 block text-[11px] font-semibold text-white/45" htmlFor="aviator-display-name">
+                      Name
+                    </label>
+                    <input
+                      id="aviator-display-name"
+                      type="text"
+                      autoComplete="nickname"
+                      className="mt-1.5 w-full rounded-[14px] border border-white/[0.08] bg-black/35 px-3 py-2.5 text-sm font-semibold text-white outline-none placeholder:text-white/30 focus:border-[#28a909]/55"
+                      value={displayName}
+                      placeholder="Enter a name"
+                      onChange={(e) => setDisplayName(e.target.value)}
+                      onBlur={handleNameBlur}
+                    />
                   </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-[13px] font-bold text-white/85">Animation</div>
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={animationEnabled}
-                      aria-label="Animation"
-                      onClick={() => setAnimationFlag(!animationEnabled)}
-                      className={[
-                        "inline-flex h-8 w-[52px] shrink-0 items-center rounded-full p-[3px] ring-1 ring-white/10 transition-colors",
-                        animationEnabled ? "justify-end bg-[#28a909]" : "justify-start bg-white/[0.16]",
-                      ].join(" ")}
-                    >
-                      <span className="h-6 w-6 rounded-full bg-white shadow" />
-                    </button>
+                ) : null}
+
+                {menuPage === "free" ? (
+                  <div className="mt-6 rounded-2xl bg-white/5 px-4 py-6 text-center">
+                    <div className="text-sm font-semibold text-white/80">No free bets</div>
+                    <p className="mt-1 text-xs leading-5 text-white/45">Free bets show up here when they are credited to this account.</p>
                   </div>
-                </div>
+                ) : null}
+
+                {menuPage === "howto" ? (
+                  <div className="mt-4 space-y-4 rounded-2xl bg-[#f0a024] px-4 py-5 text-[#1a1a1a]">
+                    {[
+                      ["01", "Make a bet, or even two at same time and wait for the round to start."],
+                      ["02", "Look after the lucky plane. Your win is bet multiplied by a coefficient of lucky plane."],
+                      ["03", "Cash Out before plane flies away and money is yours!"],
+                    ].map(([n, text]) => (
+                      <div key={n} className="grid grid-cols-[36px_1fr] gap-2">
+                        <div className="text-[20px] font-light leading-none">{n}</div>
+                        <p className="text-[14px] font-medium leading-6">{text}</p>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+
+                {menuPage === "limits" ? (
+                  <div className="mt-4 space-y-3 text-[14px] text-white/90">
+                    <div className="flex items-center justify-between gap-3">
+                      <span>Minimum bet INR:</span>
+                      <span className="rounded-full bg-[#28a909] px-3 py-1 text-[13px] font-semibold tabular-nums text-white">10.00</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <span>Maximum bet INR:</span>
+                      <span className="rounded-full bg-[#28a909] px-3 py-1 text-[13px] font-semibold tabular-nums text-white">8,000.00</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <span>Maximum win for one bet INR:</span>
+                      <span className="rounded-full bg-[#28a909] px-3 py-1 text-[13px] font-semibold tabular-nums text-white">800,000.00</span>
+                    </div>
+                  </div>
+                ) : null}
+
+                {menuPage === "rules" ? (
+                  <div className="mt-4 space-y-2 text-sm leading-6 text-white/75">
+                    <p>If you cash out before the crash, you win stake × multiplier. If you do not cash out, the stake is lost.</p>
+                    <p>Bets are only accepted during the betting window. Each panel has its own stake and cash out.</p>
+                  </div>
+                ) : null}
               </div>
             </div>
           ) : null}
@@ -1248,9 +1620,9 @@ export default function GamePage() {
 const ARENA_VB_W = 360;
 const ARENA_VB_H = 240;
 const CURVE_PAD_BOTTOM = 0; // flush with bottom
-const CURVE_PAD_TOP = 80; 
+const CURVE_PAD_TOP = 80;
 const CURVE_PAD_LEFT = 0; // flush with left
-const CURVE_PAD_RIGHT = 80; 
+const CURVE_PAD_RIGHT = 80;
 const CURVE_STROKE_W = 4;
 
 /* Plane sprite config */
@@ -1292,11 +1664,16 @@ function AviatorCurve({ phase, multiplier }: { phase: "waiting" | "flying" | "cr
   const phaseRef = useRef(phase);
   const multRef = useRef(multiplier);
   const animMultRef = useRef(1.0);
+  const flyAwayRef = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null);
   phaseRef.current = phase;
   multRef.current = multiplier;
 
   useEffect(() => {
-    if (phase === "waiting") animMultRef.current = 1.0;
+    if (phase !== "waiting") return;
+    animMultRef.current = 1;
+    flyAwayRef.current = null;
+    const el = document.getElementById("aviator-live-multiplier");
+    if (el) el.textContent = "1.00x";
   }, [phase]);
 
   useEffect(() => {
@@ -1309,8 +1686,8 @@ function AviatorCurve({ phase, multiplier }: { phase: "waiting" | "flying" | "cr
     const baseY = ARENA_VB_H - CURVE_PAD_BOTTOM;
 
     // View window stays fixed for the first ~7.0 seconds (until plane hits top right)
-    const FIX_WINDOW_X_MAX = 7.0; 
-    
+    const FIX_WINDOW_X_MAX = 7.0;
+
 
     const tick = (now: number) => {
       if (!alive) return;
@@ -1321,44 +1698,49 @@ function AviatorCurve({ phase, multiplier }: { phase: "waiting" | "flying" | "cr
       const targetMult = curPhase === "flying" ? multRef.current : 1.0;
 
       if (curPhase === "flying") {
+        if (animMultRef.current > targetMult + 0.2 && targetMult < 1.25) {
+          animMultRef.current = 1;
+        }
         // Calculate the current flight time based on the active multiplier
         let currentT = timeForMult(animMultRef.current);
         currentT += dt; // Continually advance time for perfectly smooth 60fps motion
-        
+
         const targetT = timeForMult(targetMult);
-        
+
         // Smoothly correct any drift between our local extrapolated time and the true backend time
         if (currentT < targetT) {
           currentT += (targetT - currentT) * 0.1;
         } else if (currentT > targetT + 0.5) {
           currentT = targetT + 0.5;
         }
-        
+
         animMultRef.current = multAtTime(currentT);
+        flyAwayRef.current = null;
+      } else if (curPhase === "crashed") {
+        const crashM = multRef.current > 1 ? multRef.current : animMultRef.current;
+        animMultRef.current = crashM;
       } else {
-        const cur = animMultRef.current;
-        const k = 1 - Math.exp(-12 * dt);
-        animMultRef.current = cur + (targetMult - cur) * k;
-        if (Math.abs(targetMult - animMultRef.current) < 0.0005) {
-          animMultRef.current = targetMult;
-        }
+        animMultRef.current = 1;
+        flyAwayRef.current = null;
       }
 
       const m = animMultRef.current;
       const isFlying = curPhase === "flying";
+      const isCrashed = curPhase === "crashed";
 
       // Directly update the big text multiplier element in the DOM at 60fps
       const liveTextEl = document.getElementById("aviator-live-multiplier");
       if (liveTextEl) {
-        if (isFlying) {
-          liveTextEl.innerText = `${m.toFixed(2)}x`;
+        if (curPhase === "waiting") {
+          liveTextEl.textContent = "1.00x";
+        } else if (isFlying) {
+          liveTextEl.textContent = `${m.toFixed(2)}x`;
         } else if (curPhase === "crashed") {
-          // Force the correct final crash point when crashed so it matches round history exactly
-          liveTextEl.innerText = `${multRef.current.toFixed(2)}x`;
+          liveTextEl.textContent = `${multRef.current.toFixed(2)}x`;
         }
       }
 
-      if (m <= 1.002 || !isFlying) {
+      if (m <= 1.002 || (!isFlying && !isCrashed)) {
         strokeRef.current?.setAttribute("d", "");
         fillRef.current?.setAttribute("d", "");
         planeRef.current?.setAttribute("opacity", "0");
@@ -1382,13 +1764,13 @@ function AviatorCurve({ phase, multiplier }: { phase: "waiting" | "flying" | "cr
 
       for (let i = 0; i <= steps; i++) {
         const frac = i / steps;
-        const pointT = frac * t; 
-        
+        const pointT = frac * t;
+
         const xFrac = pointT / viewXMax;
-        
+
         // Use a power curve so it rises diagonally through the center numbers
         const yFrac = Math.pow(xFrac, 1.6);
-        
+
         const x = CURVE_PAD_LEFT + xFrac * usableW + bobX * xFrac;
         const y = baseY - yFrac * usableH + bobY * xFrac;
         pts.push({ x, y });
@@ -1397,10 +1779,37 @@ function AviatorCurve({ phase, multiplier }: { phase: "waiting" | "flying" | "cr
       const curveD = smoothPathD(pts);
       const tip = pts[pts.length - 1];
 
-      strokeRef.current?.setAttribute("d", curveD);
+      if (isFlying) {
+        strokeRef.current?.setAttribute("d", curveD);
+        const fillD = `${curveD} L${tip.x.toFixed(1)} ${baseY} L${pts[0].x.toFixed(1)} ${baseY} Z`;
+        fillRef.current?.setAttribute("d", fillD);
+      } else {
+        strokeRef.current?.setAttribute("d", "");
+        fillRef.current?.setAttribute("d", "");
+      }
 
-      const fillD = `${curveD} L${tip.x.toFixed(1)} ${baseY} L${pts[0].x.toFixed(1)} ${baseY} Z`;
-      fillRef.current?.setAttribute("d", fillD);
+      if (!isFlying && !flyAwayRef.current) {
+        const prevPt = pts[Math.max(0, pts.length - 2)] ?? tip;
+        let dx = tip.x - prevPt.x;
+        let dy = tip.y - prevPt.y;
+        if (dx < 6) dx = 16;
+        if (dy > -4) dy = -12;
+        const len = Math.hypot(dx, dy) || 1;
+        const speed = 280;
+        flyAwayRef.current = { x: tip.x, y: tip.y, vx: (dx / len) * speed, vy: (dy / len) * speed };
+      }
+
+      let planeX = tip.x;
+      let planeY = tip.y;
+      if (!isFlying && flyAwayRef.current) {
+        const fly = flyAwayRef.current;
+        fly.x += fly.vx * dt;
+        fly.y += fly.vy * dt;
+        planeX = fly.x;
+        planeY = fly.y;
+      }
+      const offScreen = planeX > ARENA_VB_W + 90 || planeY < -90 || planeX < -90;
+      planeRef.current?.setAttribute("opacity", offScreen ? "0" : "1");
 
       /* ── Plane position & angle ── */
       // User explicitly requested NO curve rotation ("plan ko jesa he same vesa rakho")
@@ -1409,7 +1818,7 @@ function AviatorCurve({ phase, multiplier }: { phase: "waiting" | "flying" | "cr
 
       planeRef.current?.setAttribute(
         "transform",
-        `translate(${tip.x.toFixed(1)} ${tip.y.toFixed(1)}) rotate(${planeAngle})`
+        `translate(${planeX.toFixed(1)} ${planeY.toFixed(1)}) rotate(${planeAngle})`
       );
 
       raf = requestAnimationFrame(tick);
@@ -1444,7 +1853,7 @@ function AviatorCurve({ phase, multiplier }: { phase: "waiting" | "flying" | "cr
         <g>
           {/* Area beneath the curve */}
           <path ref={fillRef} d="" fill="url(#curveFillGrad)" />
-          
+
           {/* Curve line */}
           <path
             ref={strokeRef}
@@ -1455,7 +1864,7 @@ function AviatorCurve({ phase, multiplier }: { phase: "waiting" | "flying" | "cr
             strokeLinecap="round"
             strokeLinejoin="round"
           />
-          
+
           {/* Plane image */}
           <g
             ref={planeRef}
@@ -1473,6 +1882,36 @@ function AviatorCurve({ phase, multiplier }: { phase: "waiting" | "flying" | "cr
           </g>
         </g>
       </svg>
+    </div>
+  );
+}
+
+function MenuRow({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button type="button" onClick={onClick} className="flex w-full items-center justify-between rounded-xl px-2 py-3 text-left text-[14px] font-bold text-white/90 active:bg-white/5">
+      <span>{label}</span>
+      <span className="text-white/35">›</span>
+    </button>
+  );
+}
+
+function MenuToggle({ label, on, onClick }: { label: string; on: boolean; onClick: () => void }) {
+  return (
+    <div className="flex items-center justify-between px-2 py-2">
+      <div className="text-[14px] font-bold text-white/90">{label}</div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={on}
+        aria-label={label}
+        onClick={onClick}
+        className={[
+          "inline-flex h-8 w-[52px] shrink-0 items-center rounded-full p-[3px] ring-1 ring-white/10 transition-colors",
+          on ? "justify-end bg-[#28a909]" : "justify-start bg-white/[0.16]",
+        ].join(" ")}
+      >
+        <span className="h-6 w-6 rounded-full bg-white shadow" />
+      </button>
     </div>
   );
 }
@@ -1516,6 +1955,29 @@ function MenuLinesIcon() {
   );
 }
 
+function SpribeSplash() {
+  return (
+    <div className="absolute inset-0 z-[60] flex flex-col items-center justify-center bg-black">
+      <div className="text-[11px] tracking-[0.28em] text-white/55">POWERED BY</div>
+      <div className="mt-3 flex items-center gap-3">
+        <svg width="42" height="42" viewBox="0 0 42 42" aria-hidden>
+          <circle cx="21" cy="21" r="16" fill="none" stroke="white" strokeWidth="3" strokeDasharray="2 3" />
+          <circle cx="21" cy="21" r="6" fill="white" />
+        </svg>
+        <div>
+          <div className="text-[28px] font-black tracking-wide text-white">SPRIBE</div>
+          <div className="text-[8px] tracking-[0.22em] text-white/70">INSIGHTFUL ENTERTAINMENT</div>
+        </div>
+      </div>
+      <div className="mt-8 flex items-center gap-2">
+        <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-[#ff2d2d]" />
+        <span className="h-2 w-2 animate-pulse rounded-full bg-[#ff2d2d]/80 [animation-delay:150ms]" />
+        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#ff2d2d]/60 [animation-delay:300ms]" />
+      </div>
+    </div>
+  );
+}
+
 function CloseIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden className="text-white/90">
@@ -1529,8 +1991,10 @@ function BetPanel({
   setState,
   canBet,
   canCashout,
+  liveMultiplier,
   onBet,
   onCashout,
+  onCancel,
   toggleAction,
   roundId,
   status,
@@ -1539,8 +2003,10 @@ function BetPanel({
   setState: React.Dispatch<React.SetStateAction<BetPanelState>>;
   canBet: boolean;
   canCashout: boolean;
+  liveMultiplier: number;
   onBet: () => void;
   onCashout: () => void;
+  onCancel: () => void;
   toggleAction?: { label: string; onClick: () => void };
   roundId: number | null;
   status: string;
@@ -1549,60 +2015,44 @@ function BetPanel({
   const amountN = parsePositiveNumber(state.amount);
   const amountLabel = Number.isFinite(amountN) ? fmtINR(amountN) : state.amount;
   const autoEnabled = state.mode === "auto";
+  const stake = state.lockedStake ?? (Number.isFinite(amountN) ? amountN : 0);
+  const liveWin = Math.round(stake * (liveMultiplier || 1) * 100) / 100;
 
-  // Logic for button color and text
-  const isBetForNextRound = roundId != null && state.placedRoundId != null && status === "flying" && state.placedRoundId !== roundId;
-  const isPlacedForCurrent = roundId != null && state.placedRoundId === roundId;
-  const isCashedOut = roundId != null && state.cashedRoundId === roundId;
-  
-  let btnBg = "bg-[#28a909] ring-[#28a909]/40";
-  let btnText = roundId == null ? "Connecting..." : "Bet";
-  let btnAction = canBet ? onBet : undefined;
-  let btnOpacity = !canBet && !canCashout ? "opacity-50" : "";
+  const placed = roundId != null && state.placedRoundId === roundId;
+  const cashed = placed && state.cashedRoundId === roundId;
+  const waitingBet = placed && status === "waiting";
+  const flyingBet = placed && status === "flying" && !cashed;
 
-  if (isCashedOut) {
-    btnBg = "bg-emerald-900/60 ring-emerald-500/30 text-emerald-200/70";
-    btnText = "Cashed Out";
+  let btnBg = "bg-[#28a909] ring-[#b8f56a]/30";
+  let primary = roundId == null ? "Connecting..." : "Bet";
+  let secondary = Number.isFinite(amountN) ? `${fmtINR(amountN)} INR` : "";
+  let btnAction: (() => void) | undefined = canBet ? onBet : undefined;
+
+  if (cashed) {
+    btnBg = "bg-[#1f4d28] ring-emerald-700/40";
+    primary = "Cashed Out";
+    secondary = "";
     btnAction = undefined;
-    btnOpacity = "";
-  } else if (isBetForNextRound) {
-    btnBg = "bg-[#e93d52] ring-[#e93d52]/40";
-    btnText = "Waiting for next round";
-    btnAction = undefined; // Can't cancel yet in this simplified version
-  } else if (isPlacedForCurrent) {
-    if (status === "waiting") {
-      btnBg = "bg-[#e93d52] ring-[#e93d52]/40";
-      btnText = "Bet Placed";
-      btnAction = undefined; 
-    } else if (status === "flying") {
-      btnBg = "bg-[#d9a20a] ring-[#d9a20a]/40";
-      btnText = "Cash Out";
-      btnAction = canCashout ? onCashout : undefined;
-      btnOpacity = "";
-    } else if (status === "crashed") {
-      btnBg = "bg-rose-950/80 ring-rose-900/50 text-rose-300/60";
-      btnText = "Bet Lost";
-      btnAction = undefined;
-      btnOpacity = "";
-    }
-  } else {
-    // Not placed
-    if (status === "flying" || status === "crashed") {
-      btnBg = "bg-black/40 ring-white/5 text-white/40";
-      btnText = "Wait for next round";
-      btnAction = undefined;
-      btnOpacity = "";
-    }
+  } else if (state.queuedForNext || waitingBet) {
+    btnBg = "bg-[#e67e12] ring-[#ffb15a]/40";
+    primary = "Cancel";
+    secondary = "Waiting for next round";
+    btnAction = onCancel;
+  } else if (flyingBet) {
+    btnBg = "bg-[#e6a117] ring-[#ffe08a]/35";
+    primary = "Cash Out";
+    secondary = fmtINR(liveWin);
+    btnAction = canCashout ? onCashout : undefined;
   }
 
   return (
     <div className="overflow-hidden rounded-[16px] bg-[#1a1b1d] p-2 ring-1 ring-white/10">
       <div className="flex items-center justify-between gap-2">
         <div className="flex overflow-hidden rounded-full bg-black/35 ring-1 ring-white/10">
-          <button type="button" onClick={() => setState((p) => ({ ...p, mode: "bet" }))} className={["h-7 px-4 text-[10px] font-extrabold", state.mode === "bet" ? "bg-white/10 text-white" : "text-white/65"].join(" ")}>
+          <button type="button" onClick={() => setState((p) => ({ ...p, mode: "bet" }))} className={["h-8 px-4 text-[13px] font-medium", state.mode === "bet" ? "bg-white/10 text-white" : "text-white/65"].join(" ")}>
             Bet
           </button>
-          <button type="button" onClick={() => setState((p) => ({ ...p, mode: "auto" }))} className={["h-7 px-4 text-[10px] font-extrabold", state.mode === "auto" ? "bg-white/10 text-white" : "text-white/65"].join(" ")}>
+          <button type="button" onClick={() => setState((p) => ({ ...p, mode: "auto" }))} className={["h-8 px-4 text-[13px] font-medium", state.mode === "auto" ? "bg-white/10 text-white" : "text-white/65"].join(" ")}>
             Auto
           </button>
         </div>
@@ -1674,9 +2124,8 @@ function BetPanel({
         <button
           type="button"
           className={[
-            "relative h-[78px] rounded-[12px] px-3 py-2 text-left ring-1 active:scale-[0.99] transition-opacity",
+            "relative h-[86px] rounded-[12px] px-3 py-2 text-left ring-1 active:scale-[0.99]",
             btnBg,
-            btnOpacity,
           ].join(" ")}
           onClick={() => {
             if (btnAction) btnAction();
@@ -1684,12 +2133,10 @@ function BetPanel({
           disabled={disabled || !btnAction}
         >
           <div className="flex h-full flex-col items-center justify-center text-center">
-            <div className="text-[18px] font-black leading-tight text-white">
-              {btnText}
-            </div>
-            {btnText === "Cash Out" || btnText === "Bet" ? (
-              <div className="text-[14px] font-black leading-tight text-white/95">
-                {state.amount} <span className="text-[11px] font-bold text-white/80">INR</span>
+            <div className="text-[22px] font-normal leading-tight text-white">{primary}</div>
+            {secondary ? (
+              <div className={["mt-1 font-normal leading-tight text-white", primary === "Cash Out" ? "text-[24px] tabular-nums" : "text-[16px]"].join(" ")}>
+                {secondary}
               </div>
             ) : null}
           </div>

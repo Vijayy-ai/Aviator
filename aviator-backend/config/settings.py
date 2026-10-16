@@ -122,7 +122,7 @@ CORS_ALLOWED_ORIGINS = [
     for origin in _split_csv(
         os.environ.get(
             "CORS_ALLOWED_ORIGINS",
-            "http://localhost:3000",
+            "http://localhost:3000,http://127.0.0.1:3000",
         )
     )
 ]

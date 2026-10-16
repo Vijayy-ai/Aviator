@@ -169,7 +169,38 @@ export const SECTION_POPULAR: PlatformGameRow[] = [
 export const SECTION_ORIGINAL: PlatformGameRow[] = [
   { title: "AVIATOR", rtp: "96.40%", img: "/platformrecomand/aviator.jpeg", href: "/game" },
   { title: "VORTEX", rtp: "97.10%", img: "/platformrecomand/vertex.png" , href: "/play/vortex" },
+  { title: "CHICKEN ROAD", rtp: "97.10%", img: "/platformrecomand/chiken road.png", href: "/play/chicken-road" },
+  { title: "MONEY COMING", rtp: "97.10%", img: "/platformrecomand/moniey coming.png", href: "/play/money-coming" },
+  { title: "WINGO", rtp: "97.10%", img: "/platformrecomand/WinGo_30S_20250816142946827.png", href: "/play/wingo" },
+  { title: "K3", rtp: "96.90%", img: "/sections-image/lottary/k3.png", href: "/play/k3" },
 ];
+
+export type PlayableGame = { id: string; title: string; img: string };
+
+function playIdFromHref(href?: string) {
+  if (!href || !href.startsWith("/play/")) return null;
+  return href.slice("/play/".length);
+}
+
+/** Flat catalog used by the in-app game launcher. Posters stay until the client supplies final art. */
+export function findPlayableGame(id: string): PlayableGame {
+  const pools: { title: string; img: string; href?: string }[] = [
+    ...PLATFORM_GAMES,
+    ...SECTION_POPULAR,
+    ...SECTION_ORIGINAL,
+    ...SECTION_LOTTERY,
+    ...SECTION_CASINO,
+    ...SECTION_SLOTS,
+    ...SECTION_SPORTS,
+    ...SECTION_RUMMY,
+    ...SECTION_FISHING,
+  ];
+  for (const row of pools) {
+    const playId = playIdFromHref(row.href);
+    if (playId === id) return { id, title: row.title, img: row.img };
+  }
+  return { id, title: id.replace(/-/g, " "), img: "/platformrecomand/aviator.jpeg" };
+}
 
 export function toneGradientClass(tone: BannerTone): string {
   switch (tone) {

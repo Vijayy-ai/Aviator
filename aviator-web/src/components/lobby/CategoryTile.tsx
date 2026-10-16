@@ -21,8 +21,8 @@ export function CategoryTile({
   priority?: boolean;
 }) {
   const tall = size === "large";
-  const height = tall ? "h-[6.25rem]" : "h-[5.35rem]";
-  const titleClass = tall ? "text-[1.18rem]" : "text-[0.88rem]";
+  const height = tall ? "h-[4.7rem]" : "h-[4.05rem]";
+  const titleClass = tall ? "text-[0.95rem]" : "text-[0.78rem]";
   const iconWidth = tall ? "w-[70%]" : "w-[74%]";
   const iconLift = tall ? "h-[128%]" : "h-[132%]";
 

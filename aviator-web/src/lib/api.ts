@@ -22,19 +22,94 @@ async function authHeaders() {
   };
 }
 
-export async function firebaseLoginToBackend(params: { idToken: string; source: "web" | "app" }) {
-  const res = await fetch(`${API_BASE_URL}/api/auth/login/`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(params),
-  });
+export type UserProfile = {
+  username: string;
+  firebase_uid: string;
+  platform_type: "WEB" | "APP";
+  fake_wallet_balance: string;
+  invite_code?: string;
+  total_bonus?: string;
+  today_bonus?: string;
+};
+
+export async function firebaseLoginToBackend(params: { idToken: string; source: "web" | "app"; inviteCode?: string; phone?: string }) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE_URL}/api/auth/login/`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        idToken: params.idToken,
+        source: params.source,
+        invite_code: params.inviteCode ?? "",
+        phone: params.phone ?? "",
+      }),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error("Server did not respond. Check that Docker backend is running on port 8000.");
+    }
+    throw new Error("Could not reach the server at " + API_BASE_URL);
+  } finally {
+    clearTimeout(timer);
+  }
 
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const detail = typeof data?.detail === "string" ? data.detail : "Login failed";
     throw new Error(detail);
   }
-  return data as { profile: { username: string; firebase_uid: string; platform_type: "WEB" | "APP"; fake_wallet_balance: string } };
+  return data as { profile: UserProfile };
+}
+
+export type AgencyStats = {
+  registers: number;
+  deposit_number: number;
+  deposit_amount: string;
+  first_deposit_people: number;
+};
+
+export type AgencyResponse = {
+  invite_code: string;
+  rebate_rate: string;
+  yesterday_commission: string;
+  week_commission: string;
+  total_commission: string;
+  direct: AgencyStats;
+  team: AgencyStats;
+  subordinates: { name: string; joined: string; deposits: number; deposit_amount: string }[];
+  commissions: { amount: string; bet_amount: string; from_name: string; created_at: string }[];
+};
+
+export async function fetchAgency() {
+  const headers = await authHeaders();
+  const res = await fetch(`${API_BASE_URL}/api/agency/`, { headers });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(typeof data?.detail === "string" ? data.detail : "Failed to load agency");
+  return data as AgencyResponse;
+}
+
+export async function checkIn() {
+  const headers = await authHeaders();
+  const res = await fetch(`${API_BASE_URL}/api/activity/check-in/`, { method: "POST", headers });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(typeof data?.detail === "string" ? data.detail : "Check-in failed");
+  return data as { reward: string; profile: UserProfile };
+}
+
+export async function redeemGift(code: string) {
+  const headers = await authHeaders();
+  const res = await fetch(`${API_BASE_URL}/api/activity/redeem/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...headers },
+    body: JSON.stringify({ code }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(typeof data?.detail === "string" ? data.detail : "Redeem failed");
+  return data as { reward: string; title: string; profile: UserProfile };
 }
 
 export async function fetchMe() {
@@ -44,7 +119,7 @@ export async function fetchMe() {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(typeof data?.detail === "string" ? data.detail : "Failed to load profile");
-  return data as { profile: { username: string; firebase_uid: string; platform_type: "WEB" | "APP"; fake_wallet_balance: string } };
+  return data as { profile: UserProfile };
 }
 
 export async function updateUsername(username: string) {
@@ -56,10 +131,10 @@ export async function updateUsername(username: string) {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(typeof data?.detail === "string" ? data.detail : "Failed to update name");
-  return data as { profile: { username: string; firebase_uid: string; platform_type: "WEB" | "APP"; fake_wallet_balance: string } };
+  return data as { profile: UserProfile };
 }
 
-export async function placeBet(params: { round_id: number; bet_amount: string }) {
+export async function placeBet(params: { round_id: number; bet_amount: string; slot?: 1 | 2 }) {
   const headers = await authHeaders();
   const res = await fetch(`${API_BASE_URL}/api/game/bet/`, {
     method: "POST",
@@ -69,8 +144,8 @@ export async function placeBet(params: { round_id: number; bet_amount: string })
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(typeof data?.detail === "string" ? data.detail : "Bet failed");
   return data as {
-    bet: { id: number; round_id: number; bet_amount: string; status: string; cashout_multiplier: string | null; payout_amount: string };
-    profile: { fake_wallet_balance: string; username: string; firebase_uid: string; platform_type: "WEB" | "APP" };
+    bet: { id: number; round_id: number; bet_amount: string; status: string; cashout_multiplier: string | null; payout_amount: string; slot?: number };
+    profile: UserProfile;
   };
 }
 
@@ -129,7 +204,19 @@ export async function fetchGameState(): Promise<GameStateResponse | null> {
   };
 }
 
-export async function cashout(params: { round_id: number }) {
+export async function cancelBet(params: { round_id: number; slot: 1 | 2 }) {
+  const headers = await authHeaders();
+  const res = await fetch(`${API_BASE_URL}/api/game/cancel/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...headers },
+    body: JSON.stringify(params),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(typeof data?.detail === "string" ? data.detail : "Cancel failed");
+  return data as { profile: UserProfile; refunded: string };
+}
+
+export async function cashout(params: { round_id: number; slot?: 1 | 2 }) {
   const headers = await authHeaders();
   const res = await fetch(`${API_BASE_URL}/api/game/cashout/`, {
     method: "POST",
@@ -139,8 +226,8 @@ export async function cashout(params: { round_id: number }) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(typeof data?.detail === "string" ? data.detail : "Cashout failed");
   return data as {
-    bet: { id: number; round_id: number; bet_amount: string; status: string; cashout_multiplier: string | null; payout_amount: string };
-    profile: { fake_wallet_balance: string; username: string; firebase_uid: string; platform_type: "WEB" | "APP" };
+    bet: { id: number; round_id: number; bet_amount: string; status: string; cashout_multiplier: string | null; payout_amount: string; slot?: number };
+    profile: UserProfile;
   };
 }
 
@@ -171,7 +258,7 @@ export async function withdraw(params: { amount: string }) {
 export type TransactionResponse = {
   id: number;
   amount: string;
-  transaction_type: "DEPOSIT" | "WITHDRAW" | "BET" | "WIN";
+  transaction_type: "DEPOSIT" | "WITHDRAW" | "BET" | "WIN" | "REFUND";
   status: string;
   created_at: string;
 };

@@ -11,6 +11,19 @@ class UserProfile(models.Model):
     username = models.CharField(max_length=150, blank=True)
     platform_type = models.CharField(max_length=3, choices=PlatformType.choices)
     fake_wallet_balance = models.DecimalField(max_digits=12, decimal_places=2, default=1000.00)
+    phone = models.CharField(max_length=32, blank=True, default="")
+    invite_code = models.CharField(max_length=32, blank=True, default="")
+    referred_by = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="subordinates",
+    )
+    total_bonus = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    today_bonus = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    bonus_date = models.DateField(null=True, blank=True)
+    last_check_in = models.DateField(null=True, blank=True)
 
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
@@ -52,11 +65,17 @@ class Bet(models.Model):
     round = models.ForeignKey(GameRound, on_delete=models.CASCADE, related_name="bets")
 
     bet_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    panel = models.PositiveSmallIntegerField(default=1)
     cashout_multiplier = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)
     payout_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
 
     created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["user", "round", "panel"], name="uniq_user_round_panel"),
+        ]
 
     def __str__(self) -> str:
         return f"Bet {self.id} {self.status}"
@@ -68,6 +87,7 @@ class Transaction(models.Model):
         WITHDRAW = "WITHDRAW", "Withdraw"
         BET = "BET", "Bet"
         WIN = "WIN", "Win"
+        REFUND = "REFUND", "Refund"
 
     class Status(models.TextChoices):
         PENDING = "PENDING", "Pending"
@@ -82,3 +102,31 @@ class Transaction(models.Model):
 
     def __str__(self) -> str:
         return f"{self.transaction_type} of {self.amount} by {self.user}"
+
+
+class Commission(models.Model):
+    earner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="commissions")
+    source_user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="commissions_generated")
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    bet_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class GiftCode(models.Model):
+    code = models.CharField(max_length=32, unique=True)
+    title = models.CharField(max_length=80)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+
+    def __str__(self) -> str:
+        return self.code
+
+
+class GiftClaim(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="gift_claims")
+    gift = models.ForeignKey(GiftCode, on_delete=models.CASCADE, related_name="claims")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["user", "gift"], name="uniq_user_gift_claim"),
+        ]
