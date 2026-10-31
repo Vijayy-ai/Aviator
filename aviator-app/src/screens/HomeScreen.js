@@ -12,10 +12,11 @@ import {
   TextInput,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { collection, getDocs, query, where, orderBy, addDoc } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy, addDoc, doc, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
 import { ADMIN_EMAIL, ADMIN_EMAILS } from '../config/constants';
 import { addAllGames } from '../utils/addGames';
+import { getGameImageSource, cleanGameImageUrl, needsImageUrlFix } from '../utils/gameImage';
 import { useTheme } from '../theme/ThemeContext';
 import { 
   getFontSize, 
@@ -31,7 +32,25 @@ import {
   isTablet
 } from '../utils/responsive';
 
+function GameCardImage({ title, imageUrl, style, theme }) {
+  const source = getGameImageSource(title, imageUrl);
 
+  if (!source) {
+    return (
+      <View style={[style, { backgroundColor: theme.colors.border, alignItems: 'center', justifyContent: 'center' }]}>
+        <Ionicons name="image-outline" size={28} color={theme.colors.textSecondary} />
+      </View>
+    );
+  }
+
+  return (
+    <Image
+      source={source}
+      style={style}
+      resizeMode="cover"
+    />
+  );
+}
 
 export default function HomeScreen({ navigation }) {
   const { theme, isDarkMode, toggleTheme } = useTheme();
@@ -72,9 +91,9 @@ export default function HomeScreen({ navigation }) {
         orderBy('createdAt', 'desc')
       );
       const querySnapshot = await getDocs(gamesQuery);
-      let gamesData = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
+      let gamesData = querySnapshot.docs.map((gameDoc) => ({
+        id: gameDoc.id,
+        ...gameDoc.data(),
       }));
 
       // Auto-create Aviator game if it is missing
@@ -100,6 +119,25 @@ export default function HomeScreen({ navigation }) {
         } catch (createErr) {
           console.error('Failed to auto-create Aviator game:', createErr);
         }
+      }
+
+      // Fix broken Uploadcare transform URLs in Firestore + local list
+      const urlFixes = [];
+      gamesData = gamesData.map((game) => {
+        if (!needsImageUrlFix(game.imageUrl)) return game;
+        const cleaned = cleanGameImageUrl(game.imageUrl);
+        urlFixes.push(
+          updateDoc(doc(db, 'games', game.id), {
+            imageUrl: cleaned,
+            updatedAt: new Date(),
+          }).catch(() => {})
+        );
+        return { ...game, imageUrl: cleaned };
+      });
+      if (urlFixes.length) {
+        Promise.all(urlFixes).then(() => {
+          console.log(`Fixed ${urlFixes.length} Uploadcare image URL(s)`);
+        });
       }
 
       // Sort: Pinned (Trending) games sorted alphabetically at the top,
@@ -163,16 +201,6 @@ export default function HomeScreen({ navigation }) {
     );
   };
 
-  const getImageSource = (title, imageUrl) => {
-    if (title && title.toLowerCase() === 'aviator') {
-      return require('../../assets/icon.png');
-    }
-    if (imageUrl && (imageUrl.startsWith('http://') || imageUrl.startsWith('https://'))) {
-      return { uri: imageUrl };
-    }
-    return require('../../assets/icon.png');
-  };
-
   const renderGame = ({ item }) => (
     <TouchableOpacity
       style={[
@@ -194,10 +222,11 @@ export default function HomeScreen({ navigation }) {
         </View>
       )}
       
-      <Image
-        source={getImageSource(item.title, item.imageUrl)}
+      <GameCardImage
+        title={item.title}
+        imageUrl={item.imageUrl}
         style={styles.gameImage}
-        resizeMode="cover"
+        theme={theme}
       />
       
       <View style={styles.gameInfo}>

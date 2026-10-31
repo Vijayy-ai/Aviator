@@ -30,6 +30,43 @@ export type UserProfile = {
   invite_code?: string;
   total_bonus?: string;
   today_bonus?: string;
+  phone?: string;
+};
+
+export type WalletLimits = {
+  min_deposit: string;
+  min_withdraw: string;
+  updated_at?: string;
+};
+
+export type WithdrawRequest = {
+  id: number;
+  amount: string;
+  status: "PENDING" | "APPROVED" | "REJECTED";
+  payout_method: "UPI" | "BANK";
+  upi_id: string;
+  account_name: string;
+  account_number: string;
+  ifsc: string;
+  bank_name: string;
+  admin_note: string;
+  created_at: string;
+  reviewed_at: string | null;
+  username?: string;
+  email?: string;
+  wallet_balance?: string;
+};
+
+export type AdminUserRow = {
+  id: number;
+  firebase_uid: string;
+  username: string;
+  email: string;
+  platform_type: "WEB" | "APP";
+  fake_wallet_balance: string;
+  phone: string;
+  invite_code: string;
+  created_at: string;
 };
 
 export async function firebaseLoginToBackend(params: { idToken: string; source: "web" | "app"; inviteCode?: string; phone?: string }) {
@@ -120,6 +157,72 @@ export async function fetchMe() {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(typeof data?.detail === "string" ? data.detail : "Failed to load profile");
   return data as { profile: UserProfile };
+}
+
+const ADMIN_TOKEN_KEY = "aviator_admin_token";
+
+export function getAdminToken(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return localStorage.getItem(ADMIN_TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setAdminToken(token: string | null) {
+  if (typeof window === "undefined") return;
+  try {
+    if (token) localStorage.setItem(ADMIN_TOKEN_KEY, token);
+    else localStorage.removeItem(ADMIN_TOKEN_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+function adminHeaders(token?: string | null): HeadersInit {
+  const t = token ?? getAdminToken();
+  if (!t) throw new Error("Admin login required");
+  // Use Authorization (CORS-safe by default) + X-Admin-Token for backends that expect it.
+  return {
+    Authorization: `Admin ${t}`,
+    "X-Admin-Token": t,
+  };
+}
+
+export async function adminLogin(password: string) {
+  const res = await fetch(`${API_BASE_URL}/api/admin/login/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(typeof data?.detail === "string" ? data.detail : "Admin login failed");
+  const token = String(data.token || "");
+  if (!token) throw new Error("Admin login failed");
+  setAdminToken(token);
+  return { token };
+}
+
+export async function adminChangePassword(params: { current_password: string; new_password: string }) {
+  const headers = adminHeaders();
+  const res = await fetch(`${API_BASE_URL}/api/admin/change-password/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...headers },
+    body: JSON.stringify(params),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(typeof data?.detail === "string" ? data.detail : "Password change failed");
+  if (data.token) setAdminToken(String(data.token));
+  return data as { detail: string; token: string };
+}
+
+export async function fetchWalletLimits() {
+  const headers = await authHeaders();
+  const res = await fetch(`${API_BASE_URL}/api/wallet/limits/`, { headers });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(typeof data?.detail === "string" ? data.detail : "Failed to load limits");
+  return data as WalletLimits;
 }
 
 export async function updateUsername(username: string) {
@@ -243,7 +346,47 @@ export async function deposit(params: { amount: string }) {
   return data as { profile: { fake_wallet_balance: string } };
 }
 
-export async function withdraw(params: { amount: string }) {
+export async function createRazorpayOrder(params: { amount: string; currency?: string }) {
+  const headers = await authHeaders();
+  const res = await fetch(`${API_BASE_URL}/api/create-order/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...headers },
+    body: JSON.stringify(params),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(typeof data?.detail === "string" ? data.detail : "Could not create payment order");
+  return data as { order_id: string; amount: number; currency: string; key_id?: string };
+}
+
+export async function verifyRazorpayPayment(params: {
+  razorpay_order_id: string;
+  razorpay_payment_id: string;
+  razorpay_signature: string;
+}) {
+  const headers = await authHeaders();
+  const res = await fetch(`${API_BASE_URL}/api/verify-payment/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...headers },
+    body: JSON.stringify(params),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(typeof data?.detail === "string" ? data.detail : "Payment verification failed");
+  return data as {
+    success: boolean;
+    already_credited?: boolean;
+    profile: UserProfile;
+  };
+}
+
+export async function withdraw(params: {
+  amount: string;
+  payout_method: "UPI" | "BANK";
+  upi_id?: string;
+  account_name?: string;
+  account_number?: string;
+  ifsc?: string;
+  bank_name?: string;
+}) {
   const headers = await authHeaders();
   const res = await fetch(`${API_BASE_URL}/api/wallet/withdraw/`, {
     method: "POST",
@@ -252,7 +395,60 @@ export async function withdraw(params: { amount: string }) {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(typeof data?.detail === "string" ? data.detail : "Withdraw failed");
-  return data as { profile: { fake_wallet_balance: string } };
+  return data as {
+    profile: UserProfile;
+    request: WithdrawRequest;
+    detail?: string;
+  };
+}
+
+export async function fetchAdminWithdrawals(status?: string) {
+  const headers = adminHeaders();
+  const q = status ? `?status=${encodeURIComponent(status)}` : "";
+  const res = await fetch(`${API_BASE_URL}/api/admin/withdrawals/${q}`, { headers });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(typeof data?.detail === "string" ? data.detail : "Failed to load withdrawals");
+  return (data.requests || []) as WithdrawRequest[];
+}
+
+export async function adminWithdrawAction(params: { id: number; action: "approve" | "reject"; admin_note?: string }) {
+  const headers = adminHeaders();
+  const res = await fetch(`${API_BASE_URL}/api/admin/withdrawals/${params.id}/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...headers },
+    body: JSON.stringify({ action: params.action, admin_note: params.admin_note || "" }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(typeof data?.detail === "string" ? data.detail : "Action failed");
+  return data as { request: WithdrawRequest };
+}
+
+export async function fetchAdminUsers() {
+  const headers = adminHeaders();
+  const res = await fetch(`${API_BASE_URL}/api/admin/users/`, { headers });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(typeof data?.detail === "string" ? data.detail : "Failed to load users");
+  return (data.users || []) as AdminUserRow[];
+}
+
+export async function fetchAdminSettings() {
+  const headers = adminHeaders();
+  const res = await fetch(`${API_BASE_URL}/api/admin/settings/`, { headers });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(typeof data?.detail === "string" ? data.detail : "Failed to load settings");
+  return data as WalletLimits;
+}
+
+export async function updateAdminSettings(params: { min_deposit?: string; min_withdraw?: string }) {
+  const headers = adminHeaders();
+  const res = await fetch(`${API_BASE_URL}/api/admin/settings/`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...headers },
+    body: JSON.stringify(params),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(typeof data?.detail === "string" ? data.detail : "Failed to save settings");
+  return data as WalletLimits;
 }
 
 export type TransactionResponse = {

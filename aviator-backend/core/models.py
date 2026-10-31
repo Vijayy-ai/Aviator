@@ -10,7 +10,7 @@ class UserProfile(models.Model):
     firebase_uid = models.CharField(max_length=128, unique=True)
     username = models.CharField(max_length=150, blank=True)
     platform_type = models.CharField(max_length=3, choices=PlatformType.choices)
-    fake_wallet_balance = models.DecimalField(max_digits=12, decimal_places=2, default=1000.00)
+    fake_wallet_balance = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     phone = models.CharField(max_length=32, blank=True, default="")
     invite_code = models.CharField(max_length=32, blank=True, default="")
     referred_by = models.ForeignKey(
@@ -98,6 +98,8 @@ class Transaction(models.Model):
     amount = models.DecimalField(max_digits=12, decimal_places=2)
     transaction_type = models.CharField(max_length=16, choices=Type.choices)
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.COMPLETED)
+    # Razorpay payment id (or other gateway reference) — used for deposit idempotency.
+    external_id = models.CharField(max_length=64, blank=True, default="", db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self) -> str:
@@ -130,3 +132,93 @@ class GiftClaim(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["user", "gift"], name="uniq_user_gift_claim"),
         ]
+
+
+class SiteSettings(models.Model):
+    """Singleton row (pk=1) for admin-configurable wallet limits + admin password."""
+
+    DEFAULT_ADMIN_PASSWORD = "Admin@123"
+
+    min_deposit = models.DecimalField(max_digits=12, decimal_places=2, default=500)
+    min_withdraw = models.DecimalField(max_digits=12, decimal_places=2, default=1000)
+    admin_password_hash = models.CharField(max_length=128, blank=True, default="")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Site settings"
+        verbose_name_plural = "Site settings"
+
+    def __str__(self) -> str:
+        return f"Deposit ≥ {self.min_deposit} / Withdraw ≥ {self.min_withdraw}"
+
+    @classmethod
+    def get_solo(cls) -> "SiteSettings":
+        from django.contrib.auth.hashers import make_password
+
+        obj, created = cls.objects.get_or_create(pk=1)
+        if created or not obj.admin_password_hash:
+            obj.admin_password_hash = make_password(cls.DEFAULT_ADMIN_PASSWORD)
+            obj.save(update_fields=["admin_password_hash", "updated_at"])
+        return obj
+
+    def check_admin_password(self, raw_password: str) -> bool:
+        from django.contrib.auth.hashers import check_password
+
+        if not self.admin_password_hash:
+            return False
+        return check_password(raw_password, self.admin_password_hash)
+
+    def set_admin_password(self, raw_password: str) -> None:
+        from django.contrib.auth.hashers import make_password
+
+        self.admin_password_hash = make_password(raw_password)
+        self.save(update_fields=["admin_password_hash", "updated_at"])
+
+    def admin_token_fingerprint(self) -> str:
+        """Used so changing password invalidates old admin tokens."""
+        return (self.admin_password_hash or "")[:24]
+
+
+class WithdrawRequest(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        APPROVED = "APPROVED", "Withdrawn"
+        REJECTED = "REJECTED", "Rejected"
+
+    class PayoutMethod(models.TextChoices):
+        UPI = "UPI", "UPI"
+        BANK = "BANK", "Bank transfer"
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="withdraw_requests",
+    )
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)
+    payout_method = models.CharField(max_length=8, choices=PayoutMethod.choices)
+    upi_id = models.CharField(max_length=120, blank=True, default="")
+    account_name = models.CharField(max_length=120, blank=True, default="")
+    account_number = models.CharField(max_length=64, blank=True, default="")
+    ifsc = models.CharField(max_length=32, blank=True, default="")
+    bank_name = models.CharField(max_length=120, blank=True, default="")
+    admin_note = models.CharField(max_length=255, blank=True, default="")
+    transaction = models.OneToOneField(
+        Transaction,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="withdraw_request",
+    )
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="reviewed_withdrawals",
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self) -> str:
+        return f"Withdraw {self.amount} ({self.status}) by {self.user_id}"

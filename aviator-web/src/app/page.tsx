@@ -98,14 +98,10 @@ function UserIcon() {
   );
 }
 
-function DamanMark() {
+function BrandMark() {
   return (
-    <div className="flex items-center justify-center gap-1.5 text-white">
-      <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden>
-        <path d="M6 8h12.5a8 8 0 0 1 0 16H6V8Z" fill="white" />
-        <path d="M10 12h7a4 4 0 0 1 0 8h-7v-8Z" fill="#ff7a72" />
-      </svg>
-      <span className="text-[22px] font-extrabold tracking-tight">Daman</span>
+    <div className="flex items-center justify-center text-white">
+      <span className="text-[22px] font-extrabold tracking-tight">Tc Lottery</span>
     </div>
   );
 }
@@ -257,7 +253,7 @@ export default function Home() {
             <span className="w-9" />
           )}
           <div className="flex flex-1 justify-center pr-9">
-            <DamanMark />
+            <BrandMark />
           </div>
         </div>
         <h1 className="mt-3 text-[26px] font-bold leading-none">{screen === "login" ? "Log in" : "Register"}</h1>

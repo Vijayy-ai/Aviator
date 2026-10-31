@@ -62,7 +62,7 @@ export default function ActivityPage() {
   return (
     <MobileShell>
       <header className="bg-gradient-to-b from-[#ff8d86] to-[#ff6d66] px-4 pb-6 pt-5 text-white">
-        <div className="text-center text-[20px] font-extrabold tracking-tight">Daman</div>
+        <div className="text-center text-[20px] font-extrabold tracking-tight">Tc Lottery</div>
         <div className="mt-4 grid grid-cols-2 text-center">
           <div>
             <div className="text-[13px] text-white/90">Today&apos;s bonus</div>

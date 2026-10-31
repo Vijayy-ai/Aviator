@@ -16,52 +16,24 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { collection, addDoc, updateDoc, deleteDoc, doc, getDocs, query, orderBy } from 'firebase/firestore';
 import { db } from '../../config/firebase';
-import { uploadToUploadcare } from '../../config/uploadcare';
+import { uploadGameImage, getImageStorageLabel } from '../../config/imageUpload';
+import { cleanGameImageUrl, needsImageUrlFix, isUploadcareUrl } from '../../utils/gameImage';
 import { useTheme } from '../../theme/ThemeContext';
 
 // Memoized Game Item Component
 const GameItem = React.memo(({ item, theme, onTogglePin, onEdit, onDelete, onUrlFixed }) => {
-  // Clean up old transformation URLs and add cache-busting
-  const cleanImageUrl = (url) => {
-    if (!url) return url;
-    
-    // If it's an old transformation URL, clean it up
-    if (url.includes('/-/resize/') || url.includes('/-/format/') || url.includes('/-/quality/')) {
-      // Extract the file ID from the URL
-      const match = url.match(/https:\/\/ucarecdn\.com\/([a-f0-9-]+)/);
-      if (match) {
-        return `https://ucarecdn.com/${match[1]}/`;
-      }
-    }
-    
-    return url;
-  };
+  const imageUrl = cleanGameImageUrl(item.imageUrl) || item.imageUrl;
 
-  // Function to fix old URLs in database
-  const fixOldImageUrl = async (gameId, oldUrl) => {
-    try {
-      const cleanUrl = cleanImageUrl(oldUrl);
-      if (cleanUrl !== oldUrl) {
-        console.log('🔧 Fixing old image URL for game:', gameId);
-        
-        await updateDoc(doc(db, 'games', gameId), {
-          imageUrl: cleanUrl,
-          updatedAt: new Date(),
-        });
-        
-        if (onUrlFixed) {
-          onUrlFixed();
-        }
-        return cleanUrl;
-      }
-    } catch (error) {
-      console.error('Error fixing old URL:', error);
-    }
-    return oldUrl;
-  };
-  
-  const imageUrl = cleanImageUrl(item.imageUrl);
-  const imageUrlWithCacheBust = `${imageUrl}${imageUrl.includes('?') ? '&' : '?'}t=${Date.now()}`;
+  React.useEffect(() => {
+    if (!needsImageUrlFix(item.imageUrl)) return;
+    const cleaned = cleanGameImageUrl(item.imageUrl);
+    updateDoc(doc(db, 'games', item.id), {
+      imageUrl: cleaned,
+      updatedAt: new Date(),
+    })
+      .then(() => onUrlFixed?.())
+      .catch((error) => console.error('Error fixing old URL:', error));
+  }, [item.id, item.imageUrl, onUrlFixed]);
   
   return (
     <View style={[
@@ -71,14 +43,9 @@ const GameItem = React.memo(({ item, theme, onTogglePin, onEdit, onDelete, onUrl
     ]}>
       <View style={styles.gameCardRow}>
         <Image 
-          source={{ uri: imageUrlWithCacheBust }} 
+          source={imageUrl ? { uri: imageUrl } : undefined} 
           style={styles.gameImage}
           resizeMode="cover"
-          onError={async (error) => {
-            if (item.imageUrl.includes('/-/resize/') || item.imageUrl.includes('/-/format/') || item.imageUrl.includes('/-/quality/')) {
-              await fixOldImageUrl(item.id, item.imageUrl);
-            }
-          }}
         />
         
         <View style={styles.gameInfo}>
@@ -201,7 +168,7 @@ export default function GamesManagementScreen() {
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ['images'],
       allowsEditing: true,
       aspect: [1, 1], // Square aspect ratio for consistent sizing
       quality: 0.8,
@@ -218,12 +185,11 @@ export default function GamesManagementScreen() {
 
   const uploadImage = async (imageUri) => {
     try {
-      console.log('🚀 Uploading image to Uploadcare...');
-      const uploadedUrl = await uploadToUploadcare(imageUri);
-      return uploadedUrl;
+      console.log(`Uploading image to ${getImageStorageLabel()}...`);
+      return await uploadGameImage(imageUri);
     } catch (error) {
       console.error('Error uploading image:', error);
-      throw new Error('Failed to upload image');
+      throw new Error(error?.message || 'Failed to upload image');
     }
   };
 
@@ -305,7 +271,16 @@ export default function GamesManagementScreen() {
       
       if (formData.imageUrl && formData.imageUrl !== selectedGame.imageUrl) {
         console.log('Uploading new image...');
-        finalImageUrl = await uploadImage(formData.imageUrl);
+        // Local picks need upload; remote http(s) can be migrated through uploadGameImage
+        if (formData.imageUrl.startsWith('http://') || formData.imageUrl.startsWith('https://')) {
+          if (isUploadcareUrl(formData.imageUrl)) {
+            finalImageUrl = await uploadImage(cleanGameImageUrl(formData.imageUrl) || formData.imageUrl);
+          } else {
+            finalImageUrl = formData.imageUrl;
+          }
+        } else {
+          finalImageUrl = await uploadImage(formData.imageUrl);
+        }
         imageChanged = true;
         console.log('New image URL:', finalImageUrl);
       }
@@ -406,16 +381,6 @@ export default function GamesManagementScreen() {
       gameLink: game.gameLink || '',
     });
     setShowEditModal(true);
-  };
-
-  // Removed test function as we've migrated to Uploadcare
-  const handleTestUploadcare = async () => {
-    try {
-      Alert.alert('✅ Uploadcare Configured', 'Using Uploadcare with public key: 18906b1428767eaf6052');
-    } catch (error) {
-      console.error('Error:', error);
-      Alert.alert('❌ Error', 'Something went wrong');
-    }
   };
 
   // Memoized callback functions

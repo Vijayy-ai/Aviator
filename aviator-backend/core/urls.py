@@ -1,6 +1,12 @@
 from django.urls import path
 
 from .views import (
+    AdminChangePasswordView,
+    AdminLoginView,
+    AdminSettingsView,
+    AdminUsersView,
+    AdminWithdrawActionView,
+    AdminWithdrawListView,
     CancelBetView,
     CashoutView,
     FirebaseLoginView,
@@ -11,11 +17,14 @@ from .views import (
     ProfileView,
     DepositView,
     WithdrawView,
+    WalletLimitsView,
     TransactionHistoryView,
     GameHistoryView,
     AgencyView,
     CheckInView,
     RedeemGiftView,
+    CreateRazorpayOrderView,
+    VerifyRazorpayPaymentView,
 )
 
 urlpatterns = [
@@ -29,10 +38,18 @@ urlpatterns = [
     path("api/game/cancel/", CancelBetView.as_view(), name="cancel-bet"),
     path("api/wallet/deposit/", DepositView.as_view(), name="deposit"),
     path("api/wallet/withdraw/", WithdrawView.as_view(), name="withdraw"),
+    path("api/wallet/limits/", WalletLimitsView.as_view(), name="wallet-limits"),
     path("api/wallet/transactions/", TransactionHistoryView.as_view(), name="transactions"),
     path("api/game/history/", GameHistoryView.as_view(), name="game-history"),
     path("api/agency/", AgencyView.as_view(), name="agency"),
     path("api/activity/check-in/", CheckInView.as_view(), name="check-in"),
     path("api/activity/redeem/", RedeemGiftView.as_view(), name="redeem-gift"),
+    path("api/create-order/", CreateRazorpayOrderView.as_view(), name="razorpay-create-order"),
+    path("api/verify-payment/", VerifyRazorpayPaymentView.as_view(), name="razorpay-verify-payment"),
+    path("api/admin/login/", AdminLoginView.as_view(), name="admin-login"),
+    path("api/admin/change-password/", AdminChangePasswordView.as_view(), name="admin-change-password"),
+    path("api/admin/withdrawals/", AdminWithdrawListView.as_view(), name="admin-withdrawals"),
+    path("api/admin/withdrawals/<int:pk>/", AdminWithdrawActionView.as_view(), name="admin-withdrawal-action"),
+    path("api/admin/users/", AdminUsersView.as_view(), name="admin-users"),
+    path("api/admin/settings/", AdminSettingsView.as_view(), name="admin-settings"),
 ]
-

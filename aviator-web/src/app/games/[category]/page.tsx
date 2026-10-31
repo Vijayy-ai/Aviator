@@ -60,17 +60,10 @@ export default async function GamesCategoryPage({
       break;
     case "lottery":
       body = (
-        <div className="flex flex-col gap-2">
-          <div className="grid grid-cols-2 gap-2">
-            {SECTION_LOTTERY.slice(0, 2).map((c) => (
-              <LotteryRowCard key={c.id} item={c} size="large" />
-            ))}
-          </div>
-          <div className="grid grid-cols-3 gap-2">
-            {SECTION_LOTTERY.slice(2).map((c) => (
-              <LotteryRowCard key={c.id} item={c} size="compact" />
-            ))}
-          </div>
+        <div className="grid grid-cols-3 gap-2.5">
+          {SECTION_LOTTERY.map((c) => (
+            <LotteryRowCard key={c.id} item={c} />
+          ))}
         </div>
       );
       break;

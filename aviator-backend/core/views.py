@@ -1,7 +1,11 @@
 from django.contrib.auth import get_user_model
-from decimal import Decimal
+from django.core import signing
+from decimal import Decimal, ROUND_HALF_UP
 from datetime import timedelta
+import hashlib
+import hmac
 import secrets
+import time
 
 from django.db import transaction
 from django.db.models import Count, Sum
@@ -9,26 +13,90 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, BasePermission, AllowAny
 
 from firebase_admin import auth as firebase_auth
 
 from .firebase import get_firebase_app
-from .models import Bet, Commission, GameRound, GiftClaim, GiftCode, UserProfile, Transaction
+from .models import (
+    Bet,
+    Commission,
+    GameRound,
+    GiftClaim,
+    GiftCode,
+    SiteSettings,
+    UserProfile,
+    Transaction,
+    WithdrawRequest,
+)
+from .razorpay_client import (
+    BadRequestError,
+    RazorpayConfigError,
+    ServerError,
+    get_razorpay_client,
+    get_razorpay_keys,
+)
 from .serializers import (
+    AdminUserSerializer,
     BetSerializer,
     CancelBetSerializer,
     CashoutSerializer,
     LoginRequestSerializer,
     PlaceBetSerializer,
+    SiteSettingsSerializer,
     UpdateUsernameSerializer,
     UserProfileSerializer,
     TransactionSerializer,
     AmountSerializer,
+    WithdrawRequestCreateSerializer,
+    WithdrawRequestSerializer,
 )
 from .state import get_state
 
 REBATE_RATE = Decimal("0.006")
+ADMIN_TOKEN_SALT = "aviator-admin-panel"
+ADMIN_TOKEN_MAX_AGE = 60 * 60 * 24 * 7  # 7 days
+
+
+def get_wallet_limits() -> SiteSettings:
+    return SiteSettings.get_solo()
+
+
+def issue_admin_token(settings_obj: SiteSettings) -> str:
+    return signing.dumps(
+        {"role": "admin", "fp": settings_obj.admin_token_fingerprint()},
+        salt=ADMIN_TOKEN_SALT,
+    )
+
+
+def verify_admin_token(token: str) -> bool:
+    if not token:
+        return False
+    try:
+        payload = signing.loads(token, salt=ADMIN_TOKEN_SALT, max_age=ADMIN_TOKEN_MAX_AGE)
+    except signing.BadSignature:
+        return False
+    if payload.get("role") != "admin":
+        return False
+    settings_obj = get_wallet_limits()
+    return payload.get("fp") == settings_obj.admin_token_fingerprint()
+
+
+def extract_admin_token(request) -> str:
+    header = request.headers.get("X-Admin-Token") or ""
+    if header.strip():
+        return header.strip()
+    auth = request.headers.get("Authorization") or ""
+    if auth.lower().startswith("admin "):
+        return auth.split(" ", 1)[1].strip()
+    return ""
+
+
+class IsPanelAdmin(BasePermission):
+    """Password-based admin panel auth — no Firebase login required."""
+
+    def has_permission(self, request, view):
+        return verify_admin_token(extract_admin_token(request))
 
 
 def generate_invite_code() -> str:
@@ -154,11 +222,14 @@ class FirebaseLoginView(APIView):
                 username=f"fb_{firebase_uid}"[:150],
                 defaults={"email": email},
             )
-            if email and not django_user.email:
-                django_user.email = email
-                django_user.save(update_fields=["email"])
             profile.user = django_user
             profile.save(update_fields=["user", "updated_at"])
+        else:
+            django_user = profile.user
+
+        if email and django_user.email != email:
+            django_user.email = email
+            django_user.save(update_fields=["email"])
 
         return Response({"profile": UserProfileSerializer(profile).data})
 
@@ -338,43 +409,53 @@ class CancelBetView(APIView):
 
 
 class DepositView(APIView):
+    """Legacy free-credit endpoint — disabled. Use Razorpay /api/create-order/."""
+
     permission_classes = [IsAuthenticated]
 
-    @transaction.atomic
     def post(self, request):
-        s = AmountSerializer(data=request.data)
-        s.is_valid(raise_exception=True)
-        amount = s.validated_data["amount"]
-
-        profile = UserProfile.objects.select_for_update().get(user=request.user)
-        profile.fake_wallet_balance = (profile.fake_wallet_balance + amount).quantize(Decimal("0.01"))
-        profile.save(update_fields=["fake_wallet_balance", "updated_at"])
-
-        tx = Transaction.objects.create(
-            user=request.user,
-            amount=amount,
-            transaction_type=Transaction.Type.DEPOSIT,
-            status=Transaction.Status.COMPLETED,
-        )
-
         return Response(
-            {"transaction": TransactionSerializer(tx).data, "profile": UserProfileSerializer(profile).data},
-            status=status.HTTP_201_CREATED,
+            {"detail": "Free deposits are disabled. Please use Razorpay deposit."},
+            status=status.HTTP_403_FORBIDDEN,
         )
+
+
+class WalletLimitsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        limits = get_wallet_limits()
+        return Response(SiteSettingsSerializer(limits).data)
 
 
 class WithdrawView(APIView):
+    """Create a withdraw REQUEST. Balance is held until admin approves or rejects."""
+
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic
     def post(self, request):
-        s = AmountSerializer(data=request.data)
+        s = WithdrawRequestCreateSerializer(data=request.data)
         s.is_valid(raise_exception=True)
-        amount = s.validated_data["amount"]
+        data = s.validated_data
+        amount = data["amount"].quantize(Decimal("0.01"))
+
+        limits = get_wallet_limits()
+        if amount < limits.min_withdraw:
+            return Response(
+                {"detail": f"Minimum withdraw is ₹{limits.min_withdraw}."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         profile = UserProfile.objects.select_for_update().get(user=request.user)
         if profile.fake_wallet_balance < amount:
             return Response({"detail": "Insufficient balance."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if WithdrawRequest.objects.filter(user=request.user, status=WithdrawRequest.Status.PENDING).exists():
+            return Response(
+                {"detail": "You already have a pending withdraw request."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         profile.fake_wallet_balance = (profile.fake_wallet_balance - amount).quantize(Decimal("0.01"))
         profile.save(update_fields=["fake_wallet_balance", "updated_at"])
@@ -383,13 +464,155 @@ class WithdrawView(APIView):
             user=request.user,
             amount=amount,
             transaction_type=Transaction.Type.WITHDRAW,
-            status=Transaction.Status.COMPLETED,
+            status=Transaction.Status.PENDING,
+        )
+
+        wr = WithdrawRequest.objects.create(
+            user=request.user,
+            amount=amount,
+            payout_method=data["payout_method"],
+            upi_id=(data.get("upi_id") or "").strip(),
+            account_name=(data.get("account_name") or "").strip(),
+            account_number=(data.get("account_number") or "").strip(),
+            ifsc=(data.get("ifsc") or "").strip().upper(),
+            bank_name=(data.get("bank_name") or "").strip(),
+            transaction=tx,
         )
 
         return Response(
-            {"transaction": TransactionSerializer(tx).data, "profile": UserProfileSerializer(profile).data},
+            {
+                "request": WithdrawRequestSerializer(wr).data,
+                "transaction": TransactionSerializer(tx).data,
+                "profile": UserProfileSerializer(profile).data,
+                "detail": "Withdraw request submitted. Waiting for admin approval.",
+            },
             status=status.HTTP_201_CREATED,
         )
+
+
+class AdminLoginView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        password = str(request.data.get("password") or "")
+        settings_obj = get_wallet_limits()
+        if not settings_obj.check_admin_password(password):
+            return Response({"detail": "Invalid admin password."}, status=status.HTTP_401_UNAUTHORIZED)
+        token = issue_admin_token(settings_obj)
+        return Response({"token": token, "expires_in": ADMIN_TOKEN_MAX_AGE})
+
+
+class AdminChangePasswordView(APIView):
+    authentication_classes = []
+    permission_classes = [IsPanelAdmin]
+
+    def post(self, request):
+        current_password = str(request.data.get("current_password") or "")
+        new_password = str(request.data.get("new_password") or "")
+        if len(new_password) < 6:
+            return Response({"detail": "New password must be at least 6 characters."}, status=status.HTTP_400_BAD_REQUEST)
+        settings_obj = get_wallet_limits()
+        if not settings_obj.check_admin_password(current_password):
+            return Response({"detail": "Current password is incorrect."}, status=status.HTTP_400_BAD_REQUEST)
+        settings_obj.set_admin_password(new_password)
+        token = issue_admin_token(settings_obj)
+        return Response({"detail": "Password updated.", "token": token})
+
+
+class AdminWithdrawListView(APIView):
+    authentication_classes = []
+    permission_classes = [IsPanelAdmin]
+
+    def get(self, request):
+        status_filter = (request.query_params.get("status") or "").strip().upper()
+        qs = WithdrawRequest.objects.select_related("user", "user__profile").order_by("-created_at")
+        if status_filter in {c.value for c in WithdrawRequest.Status}:
+            qs = qs.filter(status=status_filter)
+        return Response({"requests": WithdrawRequestSerializer(qs[:200], many=True).data})
+
+
+class AdminWithdrawActionView(APIView):
+    authentication_classes = []
+    permission_classes = [IsPanelAdmin]
+
+    @transaction.atomic
+    def post(self, request, pk: int):
+        action = str(request.data.get("action") or "").strip().lower()
+        note = str(request.data.get("admin_note") or "").strip()[:255]
+        if action not in {"approve", "reject"}:
+            return Response({"detail": "action must be approve or reject."}, status=status.HTTP_400_BAD_REQUEST)
+
+        wr = (
+            WithdrawRequest.objects.select_for_update()
+            .select_related("transaction", "user")
+            .filter(pk=pk)
+            .first()
+        )
+        if wr is None:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        if wr.status != WithdrawRequest.Status.PENDING:
+            return Response({"detail": "Request is already processed."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if action == "approve":
+            wr.status = WithdrawRequest.Status.APPROVED
+            if wr.transaction_id:
+                wr.transaction.status = Transaction.Status.COMPLETED
+                wr.transaction.save(update_fields=["status"])
+        else:
+            wr.status = WithdrawRequest.Status.REJECTED
+            profile = UserProfile.objects.select_for_update().get(user=wr.user)
+            profile.fake_wallet_balance = (profile.fake_wallet_balance + wr.amount).quantize(Decimal("0.01"))
+            profile.save(update_fields=["fake_wallet_balance", "updated_at"])
+            if wr.transaction_id:
+                wr.transaction.status = Transaction.Status.FAILED
+                wr.transaction.save(update_fields=["status"])
+
+        wr.admin_note = note
+        wr.reviewed_by = None
+        wr.reviewed_at = timezone.now()
+        wr.save(update_fields=["status", "admin_note", "reviewed_by", "reviewed_at"])
+
+        return Response({"request": WithdrawRequestSerializer(wr).data})
+
+
+class AdminUsersView(APIView):
+    authentication_classes = []
+    permission_classes = [IsPanelAdmin]
+
+    def get(self, request):
+        qs = UserProfile.objects.select_related("user").order_by("-created_at")[:300]
+        return Response({"users": AdminUserSerializer(qs, many=True).data})
+
+
+class AdminSettingsView(APIView):
+    authentication_classes = []
+    permission_classes = [IsPanelAdmin]
+
+    def get(self, request):
+        return Response(SiteSettingsSerializer(get_wallet_limits()).data)
+
+    @transaction.atomic
+    def patch(self, request):
+        get_wallet_limits()
+        limits = SiteSettings.objects.select_for_update().get(pk=1)
+        raw_dep = request.data.get("min_deposit", None)
+        raw_wd = request.data.get("min_withdraw", None)
+        try:
+            if raw_dep is not None and str(raw_dep).strip() != "":
+                dep = Decimal(str(raw_dep)).quantize(Decimal("0.01"))
+                if dep < 1:
+                    return Response({"detail": "min_deposit must be at least 1."}, status=status.HTTP_400_BAD_REQUEST)
+                limits.min_deposit = dep
+            if raw_wd is not None and str(raw_wd).strip() != "":
+                wd = Decimal(str(raw_wd)).quantize(Decimal("0.01"))
+                if wd < 1:
+                    return Response({"detail": "min_withdraw must be at least 1."}, status=status.HTTP_400_BAD_REQUEST)
+                limits.min_withdraw = wd
+        except Exception:
+            return Response({"detail": "Invalid amount."}, status=status.HTTP_400_BAD_REQUEST)
+        limits.save(update_fields=["min_deposit", "min_withdraw", "updated_at"])
+        return Response(SiteSettingsSerializer(limits).data)
 
 
 class TransactionHistoryView(APIView):
@@ -518,3 +741,160 @@ class RedeemGiftView(APIView):
         profile.total_bonus = (profile.total_bonus + gift.amount).quantize(Decimal("0.01"))
         profile.save(update_fields=["today_bonus", "total_bonus", "updated_at"])
         return Response({"reward": str(gift.amount), "title": gift.title, "profile": UserProfileSerializer(profile).data})
+
+
+class CreateRazorpayOrderView(APIView):
+    """POST /api/create-order/ — create a Razorpay order (amount in INR rupees or amount_paise)."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        raw_paise = request.data.get("amount_paise", None)
+        raw_amount = request.data.get("amount", None)
+        currency = str(request.data.get("currency") or "INR").upper()
+        receipt = str(request.data.get("receipt") or "").strip()
+
+        try:
+            if raw_paise is not None and str(raw_paise).strip() != "":
+                amount_paise = int(raw_paise)
+            elif raw_amount is not None and str(raw_amount).strip() != "":
+                rupees = Decimal(str(raw_amount))
+                if rupees <= 0:
+                    return Response({"detail": "Amount must be greater than 0."}, status=status.HTTP_400_BAD_REQUEST)
+                amount_paise = int((rupees * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+            else:
+                return Response({"detail": "amount or amount_paise is required."}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            return Response({"detail": "Invalid amount."}, status=status.HTTP_400_BAD_REQUEST)
+
+        limits = get_wallet_limits()
+        min_paise = int((limits.min_deposit * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+        if amount_paise < min_paise:
+            return Response(
+                {"detail": f"Minimum deposit is ₹{limits.min_deposit}."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not receipt:
+            receipt = f"rcpt_{request.user.id}_{int(time.time())}"
+        receipt = receipt[:40]
+
+        try:
+            client = get_razorpay_client()
+            order = client.order.create(
+                {
+                    "amount": amount_paise,
+                    "currency": currency,
+                    "receipt": receipt,
+                    "payment_capture": 1,
+                }
+            )
+        except RazorpayConfigError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except BadRequestError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except ServerError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except Exception as e:
+            msg = str(e)
+            if "auth" in msg.lower() or "authentication" in msg.lower() or "unauthorized" in msg.lower():
+                return Response({"detail": "Razorpay authentication failed."}, status=status.HTTP_401_UNAUTHORIZED)
+            return Response({"detail": msg or "Failed to create order."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        try:
+            key_id, _ = get_razorpay_keys()
+        except RazorpayConfigError:
+            key_id = ""
+
+        return Response(
+            {
+                "order_id": order.get("id"),
+                "amount": order.get("amount"),
+                "currency": order.get("currency", currency),
+                "key_id": key_id,
+            }
+        )
+
+
+class VerifyRazorpayPaymentView(APIView):
+    """POST /api/verify-payment/ — HMAC-SHA256(order_id|payment_id) vs razorpay_signature."""
+
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request):
+        order_id = str(request.data.get("razorpay_order_id") or "").strip()
+        payment_id = str(request.data.get("razorpay_payment_id") or "").strip()
+        signature = str(request.data.get("razorpay_signature") or "").strip()
+
+        if not order_id or not payment_id or not signature:
+            return Response(
+                {"detail": "razorpay_order_id, razorpay_payment_id, and razorpay_signature are required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            _, key_secret = get_razorpay_keys()
+        except RazorpayConfigError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        expected = hmac.new(
+            key_secret.encode("utf-8"),
+            f"{order_id}|{payment_id}".encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+
+        if not hmac.compare_digest(expected, signature):
+            return Response({"detail": "Signature mismatch.", "success": False}, status=status.HTTP_400_BAD_REQUEST)
+
+        existing = Transaction.objects.filter(
+            user=request.user,
+            transaction_type=Transaction.Type.DEPOSIT,
+            external_id=payment_id,
+            status=Transaction.Status.COMPLETED,
+        ).first()
+        if existing is not None:
+            profile = UserProfile.objects.get(user=request.user)
+            return Response(
+                {
+                    "success": True,
+                    "already_credited": True,
+                    "transaction": TransactionSerializer(existing).data,
+                    "profile": UserProfileSerializer(profile).data,
+                }
+            )
+
+        try:
+            client = get_razorpay_client()
+            order = client.order.fetch(order_id)
+        except Exception as e:
+            return Response(
+                {"detail": f"Could not fetch order: {e}", "success": False},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        amount_paise = int(order.get("amount") or 0)
+        if amount_paise < 100:
+            return Response({"detail": "Invalid order amount.", "success": False}, status=status.HTTP_400_BAD_REQUEST)
+
+        amount = (Decimal(amount_paise) / Decimal("100")).quantize(Decimal("0.01"))
+
+        profile = UserProfile.objects.select_for_update().get(user=request.user)
+        profile.fake_wallet_balance = (profile.fake_wallet_balance + amount).quantize(Decimal("0.01"))
+        profile.save(update_fields=["fake_wallet_balance", "updated_at"])
+
+        tx = Transaction.objects.create(
+            user=request.user,
+            amount=amount,
+            transaction_type=Transaction.Type.DEPOSIT,
+            status=Transaction.Status.COMPLETED,
+            external_id=payment_id,
+        )
+
+        return Response(
+            {
+                "success": True,
+                "transaction": TransactionSerializer(tx).data,
+                "profile": UserProfileSerializer(profile).data,
+            }
+        )

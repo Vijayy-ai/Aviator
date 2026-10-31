@@ -1,3 +1,29 @@
 from django.contrib import admin
 
-# Register your models here.
+from .models import SiteSettings, Transaction, UserProfile, WithdrawRequest
+
+
+@admin.register(UserProfile)
+class UserProfileAdmin(admin.ModelAdmin):
+    list_display = ("username", "firebase_uid", "platform_type", "fake_wallet_balance", "phone", "created_at")
+    search_fields = ("username", "firebase_uid", "phone", "invite_code")
+    list_filter = ("platform_type",)
+
+
+@admin.register(Transaction)
+class TransactionAdmin(admin.ModelAdmin):
+    list_display = ("id", "user", "transaction_type", "amount", "status", "created_at")
+    list_filter = ("transaction_type", "status")
+    search_fields = ("user__username", "external_id")
+
+
+@admin.register(WithdrawRequest)
+class WithdrawRequestAdmin(admin.ModelAdmin):
+    list_display = ("id", "user", "amount", "status", "payout_method", "upi_id", "created_at", "reviewed_at")
+    list_filter = ("status", "payout_method")
+    search_fields = ("user__username", "upi_id", "account_number", "account_name")
+
+
+@admin.register(SiteSettings)
+class SiteSettingsAdmin(admin.ModelAdmin):
+    list_display = ("id", "min_deposit", "min_withdraw", "updated_at")

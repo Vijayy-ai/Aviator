@@ -52,6 +52,7 @@ export default function GameScreen({ route, navigation }) {
   // Dynamic Telegram settings
   const [telegramLink, setTelegramLink] = useState('https://t.me/Aviator_Predictor_V5');
   const lastRoundRef = React.useRef(null);
+  const aviatorPollRef = React.useRef(false);
 
   // Custom Alert State
   const [customAlert, setCustomAlert] = useState({
@@ -98,11 +99,16 @@ export default function GameScreen({ route, navigation }) {
   };
 
   const fetchLiveAviatorPrediction = async () => {
+    if (aviatorPollRef.current) return;
+    aviatorPollRef.current = true;
     try {
       const baseUrl = getApiBaseUrl();
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2500);
-      const response = await fetch(`${baseUrl}/api/game/preview-state/`, { signal: controller.signal });
+      const timeoutId = setTimeout(() => controller.abort(), 20000);
+      const response = await fetch(`${baseUrl}/api/game/preview-state/`, {
+        signal: controller.signal,
+        headers: { Accept: 'application/json' },
+      });
       clearTimeout(timeoutId);
       
       if (!response.ok) return;
@@ -121,6 +127,8 @@ export default function GameScreen({ route, navigation }) {
       }
     } catch (err) {
       console.log('Error fetching live Aviator predictions:', err);
+    } finally {
+      aviatorPollRef.current = false;
     }
   };
 
@@ -216,6 +224,14 @@ export default function GameScreen({ route, navigation }) {
   };
 
   const handleActivation = async () => {
+    if (isActivated || isPending) {
+      setShowActivationModal(false);
+      showCustomAlert('Info', 'Code already applied', [
+        { text: 'OK', style: 'default' }
+      ]);
+      return;
+    }
+
     if (!activationCode.trim()) {
       showCustomAlert('Error', 'Please enter an activation code', [
         { text: 'OK', style: 'default' }
@@ -266,7 +282,9 @@ export default function GameScreen({ route, navigation }) {
         const pendingSnapshot = await getDocs(pendingQuery);
         
         if (!pendingSnapshot.empty) {
-          showCustomAlert('Already Pending', 'This code is already waiting for admin approval', [
+          setIsPending(true);
+          setShowActivationModal(false);
+          showCustomAlert('Info', 'Code already applied', [
             { text: 'OK', style: 'default' }
           ]);
           return;
@@ -321,8 +339,8 @@ export default function GameScreen({ route, navigation }) {
         setActivationCode('');
         setIsPending(true);
         showCustomAlert(
-          'Your code is not activated', 
-          'The activation code you have entered is not activated so please contact the admin and get this code activated through the software',
+          'Code Applied',
+          'Code already applied',
           [{ text: 'OK', style: 'default' }]
         );
       }
@@ -516,11 +534,9 @@ export default function GameScreen({ route, navigation }) {
     if (!isActivated) {
       if (isPending) {
         showCustomAlert(
-          'Your code is not activated',
-          'The activation code you have entered is not activated so please contact the admin and get this code activated through the software',
-          [
-            { text: 'OK', style: 'default' }
-          ]
+          'Info',
+          'Code already applied',
+          [{ text: 'OK', style: 'default' }]
         );
         return;
       }
@@ -695,47 +711,35 @@ export default function GameScreen({ route, navigation }) {
           </TouchableOpacity>
 
           {game.title && game.title.toLowerCase() !== 'aviator' && (
-            /* Activate Button */
+            /* Activate Button — after apply, keep closed and show already-applied state */
             <TouchableOpacity
-              style={[styles.actionButton, { backgroundColor: theme.colors.primary }]}
+              style={[
+                styles.actionButton,
+                {
+                  backgroundColor: (isActivated || isPending)
+                    ? theme.colors.textSecondary
+                    : theme.colors.primary,
+                },
+              ]}
               onPress={() => {
                 if (isActivated || isPending) {
-                  showCustomAlert('Info', 'code already applied', [{ text: 'OK', style: 'default' }]);
+                  showCustomAlert('Info', 'Code already applied', [{ text: 'OK', style: 'default' }]);
                 } else {
                   setShowActivationModal(true);
                 }
               }}
             >
-              <Ionicons name="key" size={getFontSize(20)} color="white" />
-              <Text style={styles.actionButtonText}>Activate Hack</Text>
+              <Ionicons
+                name={(isActivated || isPending) ? 'checkmark-circle' : 'key'}
+                size={getFontSize(20)}
+                color="white"
+              />
+              <Text style={styles.actionButtonText}>
+                {(isActivated || isPending) ? 'Code Already Applied' : 'Activate Hack'}
+              </Text>
             </TouchableOpacity>
           )}
         </View>
-
-
-
-        {/* Hack Connection Message - Show when activated with normal code (not admin code) */}
-        {isActivated && !isAdminActivated && (
-          <View style={styles.hackConnectionNotice}>
-            <Text style={[styles.hackConnectionText, { color: theme.colors.textSecondary }]}>
-              If you are getting wrong predictions in Aviator Predictor v5.0 then it is because the hack app is not connected to your game.
-            </Text>
-            <Text style={[styles.hackConnectionText, { color: theme.colors.textSecondary }]}>
-              Contact admin and get the hack connected to your game.
-            </Text>
-            <View style={styles.hackConnectionFooter}>
-              <Text style={[styles.hackConnectionPaid, { color: theme.colors.error, fontWeight: 'bold' }]}>
-                THIS PROCESS IS PAID.
-              </Text>
-              <TouchableOpacity 
-                style={[styles.contactAdminButton, { backgroundColor: theme.colors.primary }]}
-                onPress={openTelegram}
-              >
-                <Text style={styles.contactAdminButtonText}>Contact admin</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
 
 
 
@@ -930,92 +934,6 @@ const styles = StyleSheet.create({
     fontSize: getFontSize(12),
     fontWeight: '600',
     marginTop: getSpacing(5),
-  },
-  activationNotice: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: getSpacing(16),
-    borderRadius: getSpacing(12),
-    marginTop: getSpacing(20),
-    marginHorizontal: getSpacing(20),
-    backgroundColor: 'rgba(255, 193, 7, 0.1)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 193, 7, 0.3)',
-  },
-  activationText: {
-    fontSize: getFontSize(14),
-    marginLeft: getSpacing(8),
-    textAlign: 'center',
-  },
-  pendingNotice: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: getSpacing(16),
-    borderRadius: getSpacing(12),
-    marginTop: getSpacing(20),
-    marginHorizontal: getSpacing(20),
-    backgroundColor: 'rgba(0, 123, 255, 0.1)',
-    borderWidth: 1,
-    borderColor: 'rgba(0, 123, 255, 0.3)',
-  },
-  pendingText: {
-    fontSize: getFontSize(14),
-    marginLeft: getSpacing(8),
-    textAlign: 'center',
-  },
-  contactAdminButton: {
-    paddingVertical: getSpacing(8),
-    paddingHorizontal: getSpacing(16),
-    borderRadius: getSpacing(6),
-    alignItems: 'center',
-    justifyContent: 'center',
-    minWidth: responsiveWidth(30),
-  },
-  contactAdminButtonText: {
-    color: 'white',
-    fontSize: getFontSize(16),
-    fontWeight: '600',
-    },
-  hackConnectionNotice: {
-    padding: getSpacing(16),
-    borderRadius: getSpacing(12),
-    marginTop: getSpacing(20),
-    marginHorizontal: getSpacing(20),
-    backgroundColor: 'rgba(255, 193, 7, 0.1)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 193, 7, 0.3)',
-  },
-  hackConnectionText: {
-    fontSize: getFontSize(14),
-    lineHeight: getFontSize(20),
-    marginBottom: getSpacing(8),
-    textAlign: 'left',
-  },
-  hackConnectionFooter: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: getSpacing(12),
-    flexWrap: 'wrap',
-  },
-  hackConnectionPaid: {
-    fontSize: getFontSize(14),
-    flex: 1,
-    marginRight: getSpacing(12),
-  },
-  contactAdminButton: {
-    paddingHorizontal: getSpacing(16),
-    paddingVertical: getSpacing(8),
-    borderRadius: getSpacing(8),
-    minWidth: responsiveWidth(30),
-  },
-  contactAdminButtonText: {
-    color: 'white',
-    fontSize: getFontSize(14),
-    fontWeight: '600',
-    textAlign: 'center',
   },
   bottomSpacing: {
     height: getSpacing(20),

@@ -375,18 +375,12 @@ export default function LobbyPage() {
               </div>
             </div>
 
-            {/* Lottery: 2 + 3 grid */}
             <div id="section-lottery" />
             <SectionTitle accent="rose" title="Lottery" right={<SeeAllLink category="lottery" n={countForCategory("lottery")} />} />
-            <div className="mt-3 min-w-0 space-y-2.5 px-4">
-              <div className="grid min-w-0 grid-cols-2 gap-2.5">
-                {SECTION_LOTTERY.slice(0, 2).map((c) => (
-                  <LotteryRowCard key={c.id} item={c} size="large" />
-                ))}
-              </div>
+            <div className="mt-3 min-w-0 px-4">
               <div className="grid min-w-0 grid-cols-3 gap-2.5">
-                {SECTION_LOTTERY.slice(2, 5).map((c) => (
-                  <LotteryRowCard key={c.id} item={c} size="compact" />
+                {SECTION_LOTTERY.map((c) => (
+                  <LotteryRowCard key={c.id} item={c} />
                 ))}
               </div>
             </div>

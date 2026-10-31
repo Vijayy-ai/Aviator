@@ -94,7 +94,7 @@ export const SECTION_LOTTERY: {
   },
   {
     id: "trx",
-    title: "TRX Win Go",
+    title: "Trx Win Go",
     img: "/sections-image/lottary/trx win.png",
     gradient: "from-[#10b981] via-[#14b8a6] to-[#2dd4bf]",
     href: "/play/trx-win-go",

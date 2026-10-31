@@ -2,6 +2,13 @@
 
 import { useRouter, useParams } from "next/navigation";
 
+import { ChickenRoadScreen } from "@/components/games/ChickenRoadScreen";
+import { FiveDScreen, TrxWinGoScreen } from "@/components/games/DamanPosterScreen";
+import { K3Screen } from "@/components/games/K3Screen";
+import { MotoRaceScreen } from "@/components/games/MotoRaceScreen";
+import { MoneyComingScreen } from "@/components/games/MoneyComingScreen";
+import { VortexScreen } from "@/components/games/VortexScreen";
+import { WinGoScreen } from "@/components/games/WinGoScreen";
 import { findPlayableGame } from "@/data/lobby-catalog";
 
 function ChevronLeftIcon(props: React.SVGProps<SVGSVGElement>) {
@@ -51,6 +58,14 @@ export default function PlayGamePage() {
   const router = useRouter();
   const params = useParams();
   const id = params.id as string;
+  if (id === "wingo" || id === "win-go") return <WinGoScreen />;
+  if (id === "k3") return <K3Screen />;
+  if (id === "5d") return <FiveDScreen />;
+  if (id === "trx" || id === "trx-win-go") return <TrxWinGoScreen />;
+  if (id === "motorace" || id === "moto") return <MotoRaceScreen />;
+  if (id === "vortex") return <VortexScreen />;
+  if (id === "chicken-road") return <ChickenRoadScreen />;
+  if (id === "money-coming") return <MoneyComingScreen />;
   const game = findPlayableGame(id);
   const iframeUrl = providerLaunchUrl(id);
 

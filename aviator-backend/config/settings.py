@@ -24,6 +24,17 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 load_dotenv(BASE_DIR / ".env")
 
+# Razorpay (server-side only — never expose KEY_SECRET to the frontend)
+RAZORPAY_KEY_ID = os.environ.get("RAZORPAY_KEY_ID", "").strip()
+RAZORPAY_KEY_SECRET = os.environ.get("RAZORPAY_KEY_SECRET", "").strip()
+
+# Comma-separated Firebase/login emails that can use /api/admin/* (also Django is_staff)
+ADMIN_EMAILS = [
+    e.strip().lower()
+    for e in os.environ.get("ADMIN_EMAILS", "man12raj04@gmail.com").split(",")
+    if e.strip()
+]
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
@@ -127,6 +138,18 @@ CORS_ALLOWED_ORIGINS = [
     )
 ]
 CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_HEADERS = [
+    "accept",
+    "accept-encoding",
+    "authorization",
+    "content-type",
+    "dnt",
+    "origin",
+    "user-agent",
+    "x-csrftoken",
+    "x-requested-with",
+    "x-admin-token",
+]
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [

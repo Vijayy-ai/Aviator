@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
-import { createStackNavigator } from '@react-navigation/stack';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { StatusBar } from 'expo-status-bar';
 import { StyleSheet, View, Text, TouchableOpacity } from 'react-native';
@@ -20,8 +20,9 @@ import GamesManagementScreen from './src/screens/admin/GamesManagementScreen';
 import CodeGeneratorScreen from './src/screens/admin/CodeGeneratorScreen';
 import PredictionManagerScreen from './src/screens/admin/PredictionManagerScreen';
 import SettingsScreen from './src/screens/admin/SettingsScreen';
+import AboutScreen from './src/screens/AboutScreen';
 
-const Stack = createStackNavigator();
+const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
 
 // Global error handler
@@ -162,6 +163,7 @@ function AppContent() {
               <Stack.Screen name="Prediction" component={PredictionScreen} />
               <Stack.Screen name="AdminPanel" component={AdminPanelScreen} />
               <Stack.Screen name="AdminTabs" component={AdminTabs} />
+              <Stack.Screen name="About" component={AboutScreen} />
             </>
           )}
         </Stack.Navigator>

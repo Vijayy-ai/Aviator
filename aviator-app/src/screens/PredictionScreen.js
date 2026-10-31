@@ -11,8 +11,9 @@ import {
   Platform,
   ActivityIndicator,
 } from 'react-native';
-import Constants from 'expo-constants';
 import { Ionicons } from '@expo/vector-icons';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../config/firebase';
 import { useTheme } from '../theme/ThemeContext';
 import { 
   getFontSize, 
@@ -22,154 +23,46 @@ import {
   safeAreaBottom,
 } from '../utils/responsive';
 
-// Predefined 100-round deterministic crash schedule from the backend engine seed
-const PREDEFINED_CRASH_POINTS = [
-  1.09, 1.53, 1.93, 1.44, 1.57, 1.89, 20.98, 1.06, 2.54, 1.29, 
-  1.96, 1.17, 1.75, 3.09, 3.25, 22.35, 3.08, 4.66, 1.17, 1.82, 
-  1.84, 1.10, 2.77, 17.23, 1.28, 2.51, 1.86, 3.28, 1.44, 3.38, 
-  4.15, 23.76, 4.37, 1.53, 1.26, 1.51, 1.25, 20.35, 4.66, 1.14, 
-  2.15, 4.07, 4.51, 3.39, 1.09, 24.22, 1.93, 4.51, 4.78, 1.55, 
-  1.24, 21.22, 3.19, 1.18, 1.64, 1.18, 1.33, 1.59, 1.15, 2.06, 
-  22.55, 1.09, 3.41, 1.63, 4.26, 1.12, 2.03, 23.47, 1.21, 1.62, 
-  1.28, 1.61, 2.41, 3.97, 1.09, 4.65, 4.01, 24.06, 1.14, 3.70, 
-  1.98, 4.03, 3.21, 3.16, 2.23, 19.91, 1.22, 2.19, 2.21, 4.26, 
-  4.14, 1.43, 2.43, 4.10, 22.34, 1.12, 2.59, 4.45, 3.45, 3.92
-];
+/** Same host the website uses for live rounds. */
+const LIVE_API = 'https://aviator-fcon.onrender.com';
+const COLD_START_TIMEOUT_MS = 50000;
+const POLL_TIMEOUT_MS = 12000;
+const POLL_MS = 1000;
+const RETRY_MS = 3000;
+const DEFAULT_TELEGRAM = 'https://t.me/Aviator_Predictor_V5';
 
 export default function PredictionScreen({ route, navigation }) {
   const { theme } = useTheme();
   const { game } = route.params;
 
-  const [prediction, setPrediction] = useState('1.00X');
-  const [predictedRound, setPredictedRound] = useState('Round 1');
+  const [prediction, setPrediction] = useState('—');
+  const [predictedRound, setPredictedRound] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
-  const [activeBaseUrl, setActiveBaseUrl] = useState(null);
+  const [linkStatus, setLinkStatus] = useState('connecting');
+  const [telegramLink, setTelegramLink] = useState(DEFAULT_TELEGRAM);
   const [scaleAnim] = useState(new Animated.Value(1));
 
   const lastRoundRef = useRef(null);
-  const localFallbackIntervalRef = useRef(null);
-  const localRoundRef = useRef(1);
+  const animTimerRef = useRef(null);
+  const pullNowRef = useRef(() => {});
 
-  // Probes all possible local/LAN IP endpoints concurrently to auto-latch onto the Django server
   useEffect(() => {
-    let active = true;
-
-    const candidates = [
-      'https://aviator-fcon.onrender.com',
-      'http://10.170.200.209:8000',
-      'http://10.0.2.2:8000',
-      'http://127.0.0.1:8000',
-      'http://localhost:8000'
-    ];
-
-    const hostUri = Constants.expoConfig?.hostUri;
-    if (hostUri) {
-      const ip = hostUri.split(':')[0];
-      candidates.unshift(`http://${ip}:8000`);
-    }
-
-    const probe = async () => {
-      for (const url of candidates) {
-        try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 1200);
-          const response = await fetch(`${url}/api/game/preview-state/`, { 
-            signal: controller.signal,
-            headers: { 
-              'Accept': 'application/json',
-              'Host': 'localhost'
-            }
-          });
-          clearTimeout(timeoutId);
-
-          if (response.ok && active) {
-            setActiveBaseUrl(url);
-            return;
-          }
-        } catch (e) {
-          // Silent catch to continue probing other candidates
+    const fetchTelegramLink = async () => {
+      try {
+        const docSnap = await getDoc(doc(db, 'settings', 'telegram'));
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          if (data?.url) setTelegramLink(data.url);
         }
+      } catch (error) {
+        console.log('Error fetching telegram link on PredictionScreen:', error);
       }
     };
-
-    probe();
-
-    return () => {
-      active = false;
-    };
+    fetchTelegramLink();
   }, []);
 
-  // Polls live predictions if dynamic backend is reachable, otherwise runs standard fallback simulation
-  useEffect(() => {
-    let pollInterval = null;
-
-    if (activeBaseUrl) {
-      // Clear any offline fallback loop
-      if (localFallbackIntervalRef.current) {
-        clearInterval(localFallbackIntervalRef.current);
-        localFallbackIntervalRef.current = null;
-      }
-
-      fetchLiveState();
-      // Polling frequency at 1000ms for robust and clean synchronization
-      pollInterval = setInterval(fetchLiveState, 1000);
-    } else {
-      // Offline fallback: Increment predictions simulated sequentially every 10 seconds so app is never stuck
-      localFallbackIntervalRef.current = setInterval(() => {
-        localRoundRef.current += 1;
-        const idx = (localRoundRef.current - 1) % PREDEFINED_CRASH_POINTS.length;
-        const nextCrash = PREDEFINED_CRASH_POINTS[idx];
-
-        setPredictedRound(`Round ${localRoundRef.current}`);
-        startPredictionAnimation(nextCrash.toFixed(2) + 'X');
-      }, 10000);
-
-      // Display initial sequence round immediately
-      const idx = (localRoundRef.current - 1) % PREDEFINED_CRASH_POINTS.length;
-      setPredictedRound(`Round ${localRoundRef.current}`);
-      setPrediction(PREDEFINED_CRASH_POINTS[idx].toFixed(2) + 'X');
-    }
-
-    return () => {
-      if (pollInterval) clearInterval(pollInterval);
-      if (localFallbackIntervalRef.current) clearInterval(localFallbackIntervalRef.current);
-    };
-  }, [activeBaseUrl]);
-
-  const fetchLiveState = async () => {
-    if (!activeBaseUrl) return;
-
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2500);
-      const response = await fetch(`${activeBaseUrl}/api/game/preview-state/`, { 
-        signal: controller.signal,
-        headers: {
-          'Accept': 'application/json',
-          'Host': 'localhost'
-        }
-      });
-      clearTimeout(timeoutId);
-
-      if (!response.ok) return;
-
-      const data = await response.json();
-      if (data && data.state) {
-        const nextRound = data.state.next_round_number || 1;
-        const nextCrashPoint = data.state.next_crash_point || 1.00;
-
-        if (lastRoundRef.current !== nextRound) {
-          lastRoundRef.current = nextRound;
-          setPredictedRound(`Round ${nextRound}`);
-          startPredictionAnimation(nextCrashPoint.toFixed(2) + 'X');
-        }
-      }
-    } catch (err) {
-      // Silently catch polling error to keep the device/terminal logs extremely clean
-    }
-  };
-
   const startPredictionAnimation = (finalValueStr) => {
+    if (animTimerRef.current) clearInterval(animTimerRef.current);
     setIsGenerating(true);
     const finalValue = parseFloat(finalValueStr.replace('X', ''));
     let current = 1.00;
@@ -177,18 +70,18 @@ export default function PredictionScreen({ route, navigation }) {
     const increment = (finalValue - 1.00) / steps;
     let stepCount = 0;
 
-    // Small bounce animation on start
     Animated.sequence([
       Animated.timing(scaleAnim, { toValue: 1.15, duration: 150, useNativeDriver: true }),
       Animated.timing(scaleAnim, { toValue: 1.0, duration: 150, useNativeDriver: true })
     ]).start();
 
-    const interval = setInterval(() => {
+    animTimerRef.current = setInterval(() => {
       current += increment;
       stepCount++;
 
       if (stepCount >= steps) {
-        clearInterval(interval);
+        clearInterval(animTimerRef.current);
+        animTimerRef.current = null;
         setPrediction(finalValue.toFixed(2) + 'X');
         setIsGenerating(false);
       } else {
@@ -196,6 +89,77 @@ export default function PredictionScreen({ route, navigation }) {
       }
     }, 70);
   };
+
+  // Stay on the same live engine as the website. Never advance a local round clock.
+  useEffect(() => {
+    let cancelled = false;
+    let waitTimer = null;
+    let inFlight = null;
+
+    const applyState = (state) => {
+      const nextRound = Number(state.next_round_number);
+      const nextCrashPoint = Number(state.next_crash_point);
+      if (!Number.isFinite(nextRound) || !Number.isFinite(nextCrashPoint)) return false;
+
+      setLinkStatus('live');
+      if (lastRoundRef.current !== nextRound) {
+        lastRoundRef.current = nextRound;
+        setPredictedRound(`Round ${nextRound}`);
+        startPredictionAnimation(nextCrashPoint.toFixed(2) + 'X');
+      }
+      return true;
+    };
+
+    const pull = async () => {
+      if (cancelled || inFlight) return;
+      const hadLock = lastRoundRef.current != null;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(
+        () => controller.abort(),
+        hadLock ? POLL_TIMEOUT_MS : COLD_START_TIMEOUT_MS
+      );
+      inFlight = controller;
+
+      try {
+        const response = await fetch(`${LIVE_API}/api/game/preview-state/`, {
+          signal: controller.signal,
+          headers: { Accept: 'application/json' },
+        });
+        clearTimeout(timeoutId);
+        if (!response.ok) throw new Error(`status ${response.status}`);
+        const data = await response.json();
+        if (cancelled) return;
+        if (!data?.state || !applyState(data.state)) throw new Error('preview empty');
+        waitTimer = setTimeout(pull, POLL_MS);
+      } catch (err) {
+        clearTimeout(timeoutId);
+        const abortedForRefresh = err?.name === 'AbortError' && inFlight !== controller;
+        if (cancelled || abortedForRefresh) return;
+        setLinkStatus(lastRoundRef.current != null ? 'reconnecting' : 'connecting');
+        waitTimer = setTimeout(pull, RETRY_MS);
+      } finally {
+        if (inFlight === controller) inFlight = null;
+      }
+    };
+
+    pullNowRef.current = () => {
+      if (waitTimer) clearTimeout(waitTimer);
+      if (inFlight) {
+        inFlight.abort();
+        inFlight = null;
+      }
+      pull();
+    };
+
+    pull();
+
+    return () => {
+      cancelled = true;
+      if (waitTimer) clearTimeout(waitTimer);
+      if (inFlight) inFlight.abort();
+      if (animTimerRef.current) clearInterval(animTimerRef.current);
+    };
+  }, []);
 
   const goToGame = () => {
     if (game.gameLink) {
@@ -211,7 +175,7 @@ export default function PredictionScreen({ route, navigation }) {
           <Ionicons name="arrow-back" size={getFontSize(24)} color={theme.colors.text} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: theme.colors.text }]}>{game.title}</Text>
-        <TouchableOpacity onPress={fetchLiveState} style={styles.refreshButton}>
+        <TouchableOpacity onPress={() => pullNowRef.current()} style={styles.refreshButton}>
           <Ionicons name="refresh" size={getFontSize(24)} color={theme.colors.text} />
         </TouchableOpacity>
       </View>
@@ -224,8 +188,10 @@ export default function PredictionScreen({ route, navigation }) {
 
         {/* Clean Top LIVE PREDICTION badge as requested */}
         <View style={styles.liveIndicatorContainer}>
-          <View style={styles.greenDot} />
-          <Text style={styles.liveIndicatorText}>LIVE PREDICTION</Text>
+          <View style={[styles.greenDot, linkStatus !== 'live' && styles.waitingDot]} />
+          <Text style={[styles.liveIndicatorText, linkStatus !== 'live' && styles.waitingText]}>
+            {linkStatus === 'live' ? 'LIVE PREDICTION' : linkStatus === 'reconnecting' ? 'RECONNECTING' : 'CONNECTING'}
+          </Text>
         </View>
 
         {/* Circular Live Sync Display */}
@@ -233,9 +199,13 @@ export default function PredictionScreen({ route, navigation }) {
           <Animated.View style={[styles.predictionButton, { transform: [{ scale: scaleAnim }] }]}>
             <View style={styles.predictionButtonInner}>
               <View style={styles.predictionContent}>
-                <Text style={[styles.predictionValue, { color: theme.colors.text }]}>
-                  {prediction}
-                </Text>
+                {linkStatus === 'connecting' && prediction === '—' ? (
+                  <ActivityIndicator color="#FF6B9D" />
+                ) : (
+                  <Text style={[styles.predictionValue, { color: theme.colors.text }]}>
+                    {prediction}
+                  </Text>
+                )}
                 {/* Removed predictedRound text as requested */}
               </View>
             </View>
@@ -255,9 +225,9 @@ export default function PredictionScreen({ route, navigation }) {
 
       {/* Bottom Fixed Footer Telegram Redirect */}
       <View style={[styles.telegramContainer, { backgroundColor: theme.colors.surface, borderTopColor: theme.colors.border }]}>
-        <TouchableOpacity style={styles.telegramButton} onPress={() => Linking.openURL('https://t.me/Aviator_Predictor_V5')}>
+        <TouchableOpacity style={styles.telegramButton} onPress={() => Linking.openURL(telegramLink)}>
           <Text style={[styles.telegramText, { color: theme.colors.text }]}>Join our telegram</Text>
-          <Text style={[styles.telegramLink, { color: '#FF6B9D' }]}>https://t.me/Aviator_Predictor_V5</Text>
+          <Text style={[styles.telegramLink, { color: '#FF6B9D' }]}>{telegramLink}</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -323,11 +293,17 @@ const styles = StyleSheet.create({
     backgroundColor: '#34C759',
     marginRight: getSpacing(8),
   },
+  waitingDot: {
+    backgroundColor: '#FF9F0A',
+  },
   liveIndicatorText: {
     color: '#34C759',
     fontSize: getFontSize(12),
     fontWeight: '900',
     letterSpacing: 1.0,
+  },
+  waitingText: {
+    color: '#FF9F0A',
   },
   predictionButtonContainer: {
     marginVertical: getSpacing(20),

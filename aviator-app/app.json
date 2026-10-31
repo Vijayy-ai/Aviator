@@ -6,12 +6,6 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
-    "newArchEnabled": true,
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#000000"
-    },
     "ios": {
       "supportsTablet": true,
       "userInterfaceStyle": "dark"
@@ -23,7 +17,6 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#000000"
       },
-      "edgeToEdgeEnabled": true,
       "userInterfaceStyle": "dark",
       "permissions": [
         "android.permission.INTERNET",
@@ -40,6 +33,18 @@
         "projectId": "ab752a8d-0443-4ac9-a5d3-de09e86dd9e1"
       }
     },
-    "owner": "manraj03"
+    "owner": "manraj03",
+    "plugins": [
+      "expo-font",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#000000",
+          "imageWidth": 200
+        }
+      ]
+    ]
   }
 }
