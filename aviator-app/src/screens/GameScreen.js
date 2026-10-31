@@ -115,14 +115,23 @@ export default function GameScreen({ route, navigation }) {
       
       const data = await response.json();
       if (data && data.state) {
-        const nextRound = data.state.next_round_number || 1;
-        const nextCrashPoint = data.state.next_crash_point || 1.00;
-        
+        const st = data.state;
+        // waiting buffer → upcoming round; flying/crashed → next round
+        const showUpcomingBuffer = st.status === 'waiting';
+        const roundNumber = Number(
+          showUpcomingBuffer ? st.round_number : st.next_round_number
+        ) || 1;
+        const crashPoint = Number(
+          showUpcomingBuffer
+            ? (st.current_crash_point ?? st.crash_point)
+            : st.next_crash_point
+        ) || 1.0;
+
         // Only trigger prediction animation if the round number has changed
-        if (lastRoundRef.current !== nextRound) {
-          lastRoundRef.current = nextRound;
-          setPredictedRound(`Round ${nextRound}`);
-          startPredictionAnimation(nextCrashPoint.toFixed(2) + 'X');
+        if (lastRoundRef.current !== roundNumber) {
+          lastRoundRef.current = roundNumber;
+          setPredictedRound(`Round ${roundNumber}`);
+          startPredictionAnimation(crashPoint.toFixed(2) + 'X');
         }
       }
     } catch (err) {
@@ -468,11 +477,19 @@ export default function GameScreen({ route, navigation }) {
         
         const data = await response.json();
         if (data && data.state) {
-          const nextRound = data.state.next_round_number || 1;
-          const nextCrashPoint = data.state.next_crash_point || 1.00;
-          
-          setPredictedRound(`Round ${nextRound}`);
-          startPredictionAnimation(nextCrashPoint.toFixed(2) + 'X');
+          const st = data.state;
+          const showUpcomingBuffer = st.status === 'waiting';
+          const roundNumber = Number(
+            showUpcomingBuffer ? st.round_number : st.next_round_number
+          ) || 1;
+          const crashPoint = Number(
+            showUpcomingBuffer
+              ? (st.current_crash_point ?? st.crash_point)
+              : st.next_crash_point
+          ) || 1.0;
+
+          setPredictedRound(`Round ${roundNumber}`);
+          startPredictionAnimation(crashPoint.toFixed(2) + 'X');
           return; // Successfully got prediction, exit function!
         }
       } catch (djangoErr) {

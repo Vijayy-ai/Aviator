@@ -97,15 +97,29 @@ export default function PredictionScreen({ route, navigation }) {
     let inFlight = null;
 
     const applyState = (state) => {
-      const nextRound = Number(state.next_round_number);
-      const nextCrashPoint = Number(state.next_crash_point);
-      if (!Number.isFinite(nextRound) || !Number.isFinite(nextCrashPoint)) return false;
+      // Timing (matches web engine):
+      // - waiting (~5–6s buffer before a round starts) → show THAT upcoming round
+      // - flying / crashed → show the NEXT round after the one in play
+      // So while round 5 flies, app shows round 6; when buffer for 6 starts, it shows 6.
+      const status = String(state.status || '');
+      const showUpcomingBuffer = status === 'waiting';
+      const roundNumber = Number(
+        showUpcomingBuffer ? state.round_number : state.next_round_number
+      );
+      const crashPoint = Number(
+        showUpcomingBuffer
+          ? (state.current_crash_point ?? state.crash_point)
+          : state.next_crash_point
+      );
+      if (!Number.isFinite(roundNumber) || !Number.isFinite(crashPoint) || crashPoint <= 0) {
+        return false;
+      }
 
       setLinkStatus('live');
-      if (lastRoundRef.current !== nextRound) {
-        lastRoundRef.current = nextRound;
-        setPredictedRound(`Round ${nextRound}`);
-        startPredictionAnimation(nextCrashPoint.toFixed(2) + 'X');
+      if (lastRoundRef.current !== roundNumber) {
+        lastRoundRef.current = roundNumber;
+        setPredictedRound(`Round ${roundNumber}`);
+        startPredictionAnimation(crashPoint.toFixed(2) + 'X');
       }
       return true;
     };

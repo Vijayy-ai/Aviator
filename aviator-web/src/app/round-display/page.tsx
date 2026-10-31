@@ -98,13 +98,26 @@ export default function RoundDisplayPage() {
           <p className="text-sm text-white/50">Waiting for game engine… Run docker compose up</p>
         ) : (
           <>
-            <CrashCircle label="Current round crash" roundNumber={currentRound} crash={currentCrash} accent="rose" />
-            <CrashCircle label="Next round crash" roundNumber={nextRound} crash={nextCrash} accent="violet" />
-            <div className="text-center text-xs font-semibold text-white/45">
+            <CrashCircle
+              label="This round (live game abhi)"
+              roundNumber={currentRound}
+              crash={currentCrash}
+              accent="rose"
+            />
+            <CrashCircle
+              label="Next round (iske baad)"
+              roundNumber={nextRound}
+              crash={nextCrash}
+              accent="violet"
+            />
+            <div className="max-w-sm text-center text-xs font-semibold leading-relaxed text-white/45">
               Phase: <span className="text-white/75">{status}</span>
               {status === "flying" && state.current_multiplier != null ? (
                 <span className="ml-2 tabular-nums text-emerald-400/90">{state.current_multiplier.toFixed(2)}x live</span>
               ) : null}
+              <div className="mt-2 text-white/35">
+                Live game pe jo round chal raha hai uska crash pehle circle se match hona chahiye — dusra circle next round ke liye hai.
+              </div>
             </div>
           </>
         )}

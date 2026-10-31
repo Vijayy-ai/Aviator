@@ -12,6 +12,20 @@ class GameConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         await self.channel_layer.group_add(self.group_name, self.channel_name)
         await self.accept()
+        # Send current snapshot immediately so clients don't wait for the next tick.
+        try:
+            from .state import get_state
+
+            current = get_state()
+            if current is not None:
+                payload = {k: v for k, v in current.__dict__.items() if v is not None}
+                # Decimal → float for JSON
+                for key in ("time_left", "current_multiplier", "crash_point"):
+                    if key in payload and payload[key] is not None:
+                        payload[key] = float(payload[key])
+                await self.send(text_data=json.dumps(payload))
+        except Exception:
+            pass
 
     async def disconnect(self, close_code):
         await self.channel_layer.group_discard(self.group_name, self.channel_name)
