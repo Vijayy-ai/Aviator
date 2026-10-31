@@ -116,15 +116,12 @@ export default function GameScreen({ route, navigation }) {
       const data = await response.json();
       if (data && data.state) {
         const st = data.state;
-        // waiting buffer → upcoming round; flying/crashed → next round
-        const showUpcomingBuffer = st.status === 'waiting';
-        const roundNumber = Number(
-          showUpcomingBuffer ? st.round_number : st.next_round_number
-        ) || 1;
+        // Same round as web — update when that round starts (waiting buffer).
+        const roundNumber = Number(st.round_number) || 1;
         const crashPoint = Number(
-          showUpcomingBuffer
-            ? (st.current_crash_point ?? st.crash_point)
-            : st.next_crash_point
+          st.status === 'crashed' && st.crash_point != null
+            ? st.crash_point
+            : st.current_crash_point
         ) || 1.0;
 
         // Only trigger prediction animation if the round number has changed
@@ -478,14 +475,11 @@ export default function GameScreen({ route, navigation }) {
         const data = await response.json();
         if (data && data.state) {
           const st = data.state;
-          const showUpcomingBuffer = st.status === 'waiting';
-          const roundNumber = Number(
-            showUpcomingBuffer ? st.round_number : st.next_round_number
-          ) || 1;
+          const roundNumber = Number(st.round_number) || 1;
           const crashPoint = Number(
-            showUpcomingBuffer
-              ? (st.current_crash_point ?? st.crash_point)
-              : st.next_crash_point
+            st.status === 'crashed' && st.crash_point != null
+              ? st.crash_point
+              : st.current_crash_point
           ) || 1.0;
 
           setPredictedRound(`Round ${roundNumber}`);

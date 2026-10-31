@@ -97,19 +97,14 @@ export default function PredictionScreen({ route, navigation }) {
     let inFlight = null;
 
     const applyState = (state) => {
-      // Timing (matches web engine):
-      // - waiting (~5–6s buffer before a round starts) → show THAT upcoming round
-      // - flying / crashed → show the NEXT round after the one in play
-      // So while round 5 flies, app shows round 6; when buffer for 6 starts, it shows 6.
-      const status = String(state.status || '');
-      const showUpcomingBuffer = status === 'waiting';
-      const roundNumber = Number(
-        showUpcomingBuffer ? state.round_number : state.next_round_number
-      );
+      // Same round as web: when round 5 starts (waiting buffer / live), show round 5.
+      // After it crashes, when round 6's start buffer begins, then show round 6.
+      // Never jump ahead to next-next while the current round is still playing.
+      const roundNumber = Number(state.round_number);
       const crashPoint = Number(
-        showUpcomingBuffer
-          ? (state.current_crash_point ?? state.crash_point)
-          : state.next_crash_point
+        state.status === 'crashed' && state.crash_point != null
+          ? state.crash_point
+          : state.current_crash_point
       );
       if (!Number.isFinite(roundNumber) || !Number.isFinite(crashPoint) || crashPoint <= 0) {
         return false;
