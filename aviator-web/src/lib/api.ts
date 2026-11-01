@@ -1,11 +1,25 @@
+const PRODUCTION_API = "https://aviator-fcon.onrender.com";
+
+function isPrivateLanHost(host: string) {
+  return (
+    /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[0-1])\.)/.test(host) ||
+    host.endsWith(".local")
+  );
+}
+
 function resolvedApiBaseUrl() {
-  const env = process.env.NEXT_PUBLIC_DJANGO_API_BASE_URL?.replace(/\/$/, "") || "https://aviator-fcon.onrender.com";
-  // If you open the web UI via LAN IP (10.x), "localhost:8000" points to the phone itself and login fails.
+  const env =
+    process.env.NEXT_PUBLIC_DJANGO_API_BASE_URL?.replace(/\/$/, "") || PRODUCTION_API;
   if (typeof window !== "undefined") {
     const host = window.location.hostname;
     const isEnvLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(env);
-    const isLanHost = host && host !== "localhost" && host !== "127.0.0.1";
-    if (isLanHost && isEnvLocalhost) return `http://${host}:8000`;
+    // Local Docker only when browsing from localhost / private LAN.
+    // Never rewrite vercel.app (or any public host) to :8000 — that breaks register/login.
+    if (isEnvLocalhost) {
+      if (host === "localhost" || host === "127.0.0.1") return env;
+      if (isPrivateLanHost(host)) return `http://${host}:8000`;
+      return PRODUCTION_API;
+    }
   }
   return env;
 }
@@ -71,7 +85,8 @@ export type AdminUserRow = {
 
 export async function firebaseLoginToBackend(params: { idToken: string; source: "web" | "app"; inviteCode?: string; phone?: string }) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15000);
+  // Render free tier cold-start can take ~30–50s
+  const timer = setTimeout(() => controller.abort(), 55000);
   let res: Response;
   try {
     res = await fetch(`${API_BASE_URL}/api/auth/login/`, {
@@ -87,7 +102,7 @@ export async function firebaseLoginToBackend(params: { idToken: string; source: 
     });
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
-      throw new Error("Server did not respond. Check that Docker backend is running on port 8000.");
+      throw new Error("Server is waking up / not responding. Wait a few seconds and try again.");
     }
     throw new Error("Could not reach the server at " + API_BASE_URL);
   } finally {

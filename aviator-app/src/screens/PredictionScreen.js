@@ -211,7 +211,7 @@ export default function PredictionScreen({ route, navigation }) {
                 {linkStatus === 'connecting' && prediction === '—' ? (
                   <ActivityIndicator color="#FF6B9D" />
                 ) : (
-                  <Text style={[styles.predictionValue, { color: theme.colors.text }]}>
+                  <Text style={styles.predictionValue}>
                     {prediction}
                   </Text>
                 )}
@@ -351,6 +351,7 @@ const styles = StyleSheet.create({
   predictionValue: {
     fontSize: getFontSize(42),
     fontWeight: '900',
+    color: '#FFFFFF',
     fontFamily: Platform.OS === 'ios' ? 'Helvetica Neue' : 'sans-serif-condensed',
   },
   predictionLabel: {

@@ -305,7 +305,7 @@ export default function Home() {
         <div className="space-y-4">
           {screen === "register" || method === "phone" ? (
             <label className="block">
-              <span className="mb-2 flex items-center gap-2 text-[15px] font-medium text-zinc-700">
+              <span className="mb-2 flex items-center gap-2 text-[15px] font-semibold text-zinc-900">
                 <PhoneIcon /> Phone number
               </span>
               <div className="flex gap-2">
@@ -327,7 +327,7 @@ export default function Home() {
             </label>
           ) : (
             <label className="block">
-              <span className="mb-2 flex items-center gap-2 text-[15px] font-medium text-zinc-700">
+              <span className="mb-2 flex items-center gap-2 text-[15px] font-semibold text-zinc-900">
                 <MailIcon /> Email
               </span>
               <input
@@ -342,7 +342,7 @@ export default function Home() {
           )}
 
           <label className="block">
-            <span className="mb-2 flex items-center gap-2 text-[15px] font-medium text-zinc-700">
+            <span className="mb-2 flex items-center gap-2 text-[15px] font-semibold text-zinc-900">
               <LockIcon /> {screen === "register" ? "Set password" : "Password"}
             </span>
             <div className="relative">
@@ -370,7 +370,7 @@ export default function Home() {
           {screen === "register" ? (
             <>
               <label className="block">
-                <span className="mb-2 flex items-center gap-2 text-[15px] font-medium text-zinc-700">
+                <span className="mb-2 flex items-center gap-2 text-[15px] font-semibold text-zinc-900">
                   <LockIcon /> Confirm password
                 </span>
                 <div className="relative">
@@ -395,7 +395,7 @@ export default function Home() {
                 </div>
               </label>
               <label className="block">
-                <span className="mb-2 flex items-center gap-2 text-[15px] font-medium text-zinc-700">
+                <span className="mb-2 flex items-center gap-2 text-[15px] font-semibold text-zinc-900">
                   <UserIcon /> Invite code
                 </span>
                 <input

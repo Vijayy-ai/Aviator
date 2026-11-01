@@ -675,21 +675,21 @@ export default function GameScreen({ route, navigation }) {
             <View style={styles.predictionButtonInner}>
               {isGenerating ? (
                 <View style={styles.predictionContent}>
-                  <Text style={[styles.predictionValue, { color: theme.colors.text }]}>{prediction}</Text>
+                  <Text style={styles.predictionValue}>{prediction}</Text>
                   {predictedRound ? (
                     <Text style={[styles.predictionLabel, { color: '#FF6B9D', marginTop: 8 }]}>{predictedRound}</Text>
                   ) : null}
                 </View>
               ) : prediction ? (
                 <View style={styles.predictionContent}>
-                  <Text style={[styles.predictionValue, { color: theme.colors.text }]}>{prediction}</Text>
+                  <Text style={styles.predictionValue}>{prediction}</Text>
                   {predictedRound ? (
                     <Text style={[styles.predictionLabel, { color: '#FF6B9D', marginTop: 8 }]}>{predictedRound}</Text>
                   ) : null}
                 </View>
               ) : (
                 <View style={styles.predictionContent}>
-                  <Text style={[styles.predictionValue, { color: theme.colors.text }]}>{demoPrediction}</Text>
+                  <Text style={styles.predictionValue}>{demoPrediction}</Text>
                 </View>
               )}
             </View>
@@ -927,6 +927,7 @@ const styles = StyleSheet.create({
   predictionValue: {
     fontSize: getFontSize(52),
     fontWeight: '900',
+    color: '#FFFFFF',
     marginBottom: 0,
     marginTop: getSpacing(10),
   },
