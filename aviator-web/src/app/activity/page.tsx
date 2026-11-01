@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { BrandLogo } from "@/components/BrandLogo";
 import { LobbyImage } from "@/components/lobby/LobbyImage";
 import { MobileShell } from "@/components/layout/MobileShell";
 import { useFirebaseUser } from "@/hooks/useFirebaseUser";
@@ -62,7 +63,11 @@ export default function ActivityPage() {
   return (
     <MobileShell>
       <header className="bg-gradient-to-b from-[#ff8d86] to-[#ff6d66] px-4 pb-6 pt-5 text-white">
-        <div className="text-center text-[20px] font-extrabold tracking-tight">Tc Lottery</div>
+        <BrandLogo
+          className="flex items-center justify-center gap-2"
+          imgClassName="h-8 w-8 object-contain"
+          textClassName="text-[20px] font-extrabold tracking-tight text-white"
+        />
         <div className="mt-4 grid grid-cols-2 text-center">
           <div>
             <div className="text-[13px] text-white/90">Today&apos;s bonus</div>

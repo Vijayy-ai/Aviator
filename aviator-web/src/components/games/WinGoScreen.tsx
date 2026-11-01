@@ -24,8 +24,10 @@ export function WinGoScreen() {
             onClick={() => router.back()}
             className="absolute top-[0.2%] left-[1%] z-20 h-[2.6%] w-[14%] bg-transparent"
           />
-          <div className="absolute top-[0.7%] left-[31%] z-10 flex h-[2.55%] w-[38%] items-center justify-center bg-[linear-gradient(90deg,#fb484e_0%,#fc4a50_50%,#fc5155_100%)] text-[18px] font-bold tracking-tight text-white">
-            Tc Lottery
+          <div className="absolute top-[0.7%] left-[31%] z-10 flex h-[2.55%] w-[38%] items-center justify-center gap-1 bg-[linear-gradient(90deg,#fb484e_0%,#fc4a50_50%,#fc5155_100%)] text-[16px] font-bold tracking-tight text-white">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/tc%20web.jpeg" alt="" className="h-[70%] w-auto object-contain" />
+            <span>Tc Lottery</span>
           </div>
           <div className="absolute top-[5.95%] left-[32%] z-10 flex h-[1.65%] w-[40%] items-center justify-center gap-2 bg-[#f6f6f6] text-[15px] font-bold tabular-nums text-[#412637]">
             <span>{loading ? "…" : `${RUPEE}${formatInr(balance)}`}</span>

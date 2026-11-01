@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { createUserWithEmailAndPassword, sendPasswordResetEmail, signInWithEmailAndPassword } from "firebase/auth";
 
+import { BrandLogo } from "@/components/BrandLogo";
 import { firebaseAuth } from "@/lib/firebase";
 import { firebaseLoginToBackend } from "@/lib/api";
 
@@ -100,9 +101,11 @@ function UserIcon() {
 
 function BrandMark() {
   return (
-    <div className="flex items-center justify-center text-white">
-      <span className="text-[22px] font-extrabold tracking-tight">Tc Lottery</span>
-    </div>
+    <BrandLogo
+      className="flex items-center justify-center gap-2"
+      imgClassName="h-9 w-auto object-contain"
+      textClassName="text-[22px] font-extrabold tracking-tight text-white"
+    />
   );
 }
 

@@ -31,8 +31,15 @@ export function DamanPosterScreen({
             onClick={() => router.back()}
             className="absolute top-[0.2%] left-[1%] z-20 h-[2.6%] w-[14%] bg-transparent"
           />
-          <div className={["absolute top-[0.45%] left-[30%] z-10 flex h-[2.15%] w-[40%] items-center justify-center text-[18px] font-bold tracking-tight text-white", titleClassName].join(" ")}>
-            Tc Lottery
+          <div
+            className={[
+              "absolute top-[0.45%] left-[30%] z-10 flex h-[2.15%] w-[40%] items-center justify-center gap-1 text-[16px] font-bold tracking-tight text-white",
+              titleClassName,
+            ].join(" ")}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/tc%20web.jpeg" alt="" className="h-[70%] w-auto object-contain" />
+            <span>Tc Lottery</span>
           </div>
           <div className="absolute top-[4.75%] left-[32%] z-10 flex h-[1.5%] w-[38%] items-center justify-center gap-2 bg-[#f6f7fa] text-[15px] font-bold tabular-nums text-[#2c2430]">
             <span>{loading ? "…" : `${RUPEE}${formatInr(balance)}`}</span>

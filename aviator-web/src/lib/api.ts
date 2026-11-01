@@ -7,15 +7,27 @@ function isPrivateLanHost(host: string) {
   );
 }
 
+function isLocalhostApi(url: string) {
+  return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(url);
+}
+
 function resolvedApiBaseUrl() {
   const env =
     process.env.NEXT_PUBLIC_DJANGO_API_BASE_URL?.replace(/\/$/, "") || PRODUCTION_API;
+
+  // Deployed builds (Vercel / NODE_ENV=production) never talk to local Docker.
+  if (
+    isLocalhostApi(env) &&
+    (process.env.VERCEL || process.env.NODE_ENV === "production")
+  ) {
+    return PRODUCTION_API;
+  }
+
   if (typeof window !== "undefined") {
     const host = window.location.hostname;
-    const isEnvLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(env);
     // Local Docker only when browsing from localhost / private LAN.
-    // Never rewrite vercel.app (or any public host) to :8000 — that breaks register/login.
-    if (isEnvLocalhost) {
+    // Never rewrite vercel.app (or any public host) to :8000.
+    if (isLocalhostApi(env)) {
       if (host === "localhost" || host === "127.0.0.1") return env;
       if (isPrivateLanHost(host)) return `http://${host}:8000`;
       return PRODUCTION_API;

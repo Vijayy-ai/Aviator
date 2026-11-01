@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { BrandLogo } from "@/components/BrandLogo";
 import {
   adminChangePassword,
   adminLogin,
@@ -222,7 +223,11 @@ export default function HiddenAdminPage() {
           onSubmit={onLogin}
           className="relative w-full max-w-md rounded-3xl border border-white/10 bg-[#171a21] p-7 shadow-2xl shadow-black/40"
         >
-          <div className="text-[11px] font-bold uppercase tracking-[0.22em] text-rose-400">Tc Lottery</div>
+          <BrandLogo
+            className="flex items-center gap-2"
+            imgClassName="h-7 w-7 object-contain"
+            textClassName="text-[13px] font-bold uppercase tracking-[0.12em] text-rose-400"
+          />
           <h1 className="mt-2 text-3xl font-extrabold tracking-tight text-white">Admin access</h1>
           <p className="mt-2 text-sm leading-relaxed text-zinc-400">
             Password se seedha panel khulega. User login ki zaroorat nahi.
@@ -263,7 +268,11 @@ export default function HiddenAdminPage() {
       <header className="border-b border-white/10 bg-[#171a21]/80 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-4">
           <div>
-            <div className="text-[11px] font-bold uppercase tracking-[0.22em] text-rose-400">Tc Lottery</div>
+            <BrandLogo
+              className="mb-1 flex items-center gap-2"
+              imgClassName="h-6 w-6 object-contain"
+              textClassName="text-[11px] font-bold uppercase tracking-[0.18em] text-rose-400"
+            />
             <h1 className="text-xl font-extrabold tracking-tight text-white">Admin Panel</h1>
           </div>
           <button

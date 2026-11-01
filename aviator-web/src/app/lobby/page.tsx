@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchMe } from "@/lib/api";
 import { useFirebaseUser } from "@/hooks/useFirebaseUser";
 
+import { BrandLogo } from "@/components/BrandLogo";
 import { ChevronRightIcon, FlameIcon } from "@/components/icons/LobbyIcons";
 import { APP_CHROME_BG } from "@/components/layout/AppChrome";
 import { CategoryTile, type CategoryTileData } from "@/components/lobby/CategoryTile";
@@ -238,13 +239,11 @@ export default function LobbyPage() {
           {/* Header */}
           <div className="sticky top-0 z-10 border-b border-zinc-100/80 bg-white/95 backdrop-blur">
             <div className="flex items-center justify-between px-4 py-3">
-              <div className="flex min-w-0 items-center gap-2">
-                <svg width="28" height="28" viewBox="0 0 32 32" aria-hidden className="shrink-0">
-                  <path fill="#ff3b30" d="M5 7.5h22v6.2H18.6V25h-6.4V13.7H5V7.5Z" />
-                  <path fill="#ff6a45" d="M16.2 7.5h10.8L21.4 16H14.2L16.2 7.5Z" />
-                </svg>
-                <div className="min-w-0 text-[20px] font-extrabold leading-none tracking-tight text-[#ff3b30]">Tc Lottery</div>
-              </div>
+              <BrandLogo
+                className="flex min-w-0 items-center gap-2"
+                imgClassName="h-8 w-8 shrink-0 object-contain"
+                textClassName="min-w-0 text-[20px] font-extrabold leading-none tracking-tight text-[#ff3b30]"
+              />
               <button
                 type="button"
                 aria-label="Notifications"

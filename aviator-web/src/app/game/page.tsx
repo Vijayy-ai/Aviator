@@ -626,6 +626,8 @@ export default function GamePage() {
       };
     }
 
+    // Don't set a "backend down" error on mount — WS connect is async and that
+    // message flashed for a moment on every production refresh.
     if (ALLOW_SIM_FALLBACK) {
       fallbackTimer = window.setTimeout(() => {
         fallbackTimer = null;
@@ -633,8 +635,6 @@ export default function GamePage() {
           startSimulationFallback();
         }
       }, 5500);
-    } else {
-      setLastError("Connect backend: docker compose up (game-engine + WebSocket)");
     }
 
     connect();
@@ -1280,9 +1280,7 @@ export default function GamePage() {
 
           {simulationActive ? (
             <div className="mx-4 mt-3 rounded-2xl border border-amber-500/25 bg-amber-500/10 px-4 py-2.5 text-[12px] font-semibold leading-snug text-amber-100/95">
-              Demo mode — local wallet. Run{" "}
-              <span className="font-mono text-amber-50/95">docker compose up</span> and connect WebSocket at{" "}
-              <span className="font-mono text-amber-50/95">{WS_URL}</span> for live rounds and real bets.
+              Demo mode — connecting to live game server…
             </div>
           ) : lastError ? (
             <div className="mx-4 mt-3 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-100">
@@ -2141,23 +2139,48 @@ function WaitingInterstitial({
 }) {
   return (
     <div className="pointer-events-none absolute inset-0 z-[6] flex flex-col items-center justify-center px-4">
-      <div className="flex w-full max-w-[320px] flex-col items-center">
-        <div className="flex items-center gap-3">
-          <div className="text-[34px] font-black italic leading-none tracking-tight text-[#e10600]">UFC</div>
-          <div className="h-8 w-px bg-white/70" />
-          <div className="flex flex-col items-start leading-none">
-            <img src="/plan.png" alt="" className="mb-0.5 h-5 w-auto object-contain" />
-            <div className="text-[22px] font-black italic tracking-tight text-[#e93d52]">Aviator</div>
+      <div className="flex w-full max-w-[300px] flex-col items-center">
+        {/* UFC | Aviator official partners mark — match real waiting screen */}
+        <div className="flex items-center gap-3.5">
+          <div
+            className="text-[40px] font-black italic leading-none tracking-[-0.03em] text-[#e10600]"
+            style={{ fontStretch: "condensed", textShadow: "0 1px 0 rgba(0,0,0,0.55)" }}
+          >
+            UFC
+          </div>
+          <div className="h-10 w-px shrink-0 bg-white/85" />
+          <div className="flex flex-col items-center leading-none">
+            {/* SVG viewBox crops plan.png padding — logo plane sits tight on Aviator like real */}
+            <svg
+              width="68"
+              height="30"
+              viewBox="176 356 832 404"
+              className="mb-[1px] overflow-visible"
+              aria-hidden
+            >
+              <image href="/plan.png" width="1172" height="1172" />
+            </svg>
+            <div
+              className="text-[26px] font-black italic leading-none tracking-tight text-[#e10600]"
+              style={{ textShadow: "0 1px 0 rgba(0,0,0,0.55)" }}
+            >
+              Aviator
+            </div>
           </div>
         </div>
-        <div className="mt-2 text-[11px] font-extrabold tracking-[0.18em] text-white">OFFICIAL PARTNERS</div>
-        <div className="mt-3 h-[6px] w-full max-w-[240px] overflow-hidden rounded-full bg-[#2a2a2e]">
+        <div
+          className="mt-2.5 text-[14px] font-extrabold uppercase leading-none text-white"
+          style={{ letterSpacing: "0.28em", textShadow: "0 1px 2px rgba(0,0,0,0.65)" }}
+        >
+          OFFICIAL PARTNERS
+        </div>
+        <div className="mt-2.5 h-[3px] w-full max-w-[220px] overflow-hidden rounded-[1px] bg-[#1a1a1e]">
           <div
-            className="h-full rounded-full bg-[#e10600] transition-[width] duration-200 ease-linear"
+            className="h-full bg-[#e10600] transition-[width] duration-200 ease-linear"
             style={{ width: `${clamp(waitingPct, 2, 100)}%` }}
           />
         </div>
-        <div className="mt-4 rounded-xl bg-[#0f3d24] px-4 py-2.5 text-center ring-1 ring-[#1a5c38]">
+        <div className="mt-3.5 rounded-xl bg-[#0f3d24] px-4 py-2.5 text-center ring-1 ring-[#1a5c38]">
           <div className="flex items-center justify-center gap-2">
             <svg width="18" height="18" viewBox="0 0 42 42" aria-hidden>
               <circle cx="21" cy="21" r="14" fill="none" stroke="white" strokeWidth="3" strokeDasharray="2 3" />

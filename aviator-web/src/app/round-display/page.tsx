@@ -95,7 +95,7 @@ export default function RoundDisplayPage() {
 
       <main className="flex flex-1 flex-col items-center justify-center gap-10 px-6 py-10">
         {!state ? (
-          <p className="text-sm text-white/50">Waiting for game engine… Run docker compose up</p>
+          <p className="text-sm text-white/50">Connecting to game server…</p>
         ) : (
           <>
             <CrashCircle

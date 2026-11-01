@@ -8,9 +8,16 @@ function isPrivateLanHost(host: string) {
   );
 }
 
+function isLocalhostWs(url: string) {
+  return /^ws:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//i.test(url);
+}
+
+function productionWsFor(path: "/ws/game/" | "/ws/game-preview/") {
+  return path === "/ws/game/" ? PRODUCTION_WS : PRODUCTION_PREVIEW_WS;
+}
+
 function rewriteLocalWs(env: string, host: string, path: "/ws/game/" | "/ws/game-preview/") {
-  const isEnvLocalhost = /^ws:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//i.test(env);
-  if (!isEnvLocalhost) return env;
+  if (!isLocalhostWs(env)) return env;
   if (host === "localhost" || host === "127.0.0.1") return env;
   if (isPrivateLanHost(host)) {
     const portMatch = env.match(/:(\d+)\//);
@@ -18,11 +25,17 @@ function rewriteLocalWs(env: string, host: string, path: "/ws/game/" | "/ws/game
     return `ws://${host}:${port}${path}`;
   }
   // Public hosts (vercel.app etc.) must use production WSS — never :8000
-  return path === "/ws/game/" ? PRODUCTION_WS : PRODUCTION_PREVIEW_WS;
+  return productionWsFor(path);
 }
 
 function resolvedWsUrl() {
   const env = process.env.NEXT_PUBLIC_WS_URL?.trim() || PRODUCTION_WS;
+  if (
+    isLocalhostWs(env) &&
+    (process.env.VERCEL || process.env.NODE_ENV === "production")
+  ) {
+    return PRODUCTION_WS;
+  }
   if (typeof window !== "undefined") {
     return rewriteLocalWs(env, window.location.hostname, "/ws/game/");
   }
@@ -34,6 +47,12 @@ function resolvedPreviewWsUrl() {
     process.env.NEXT_PUBLIC_PREVIEW_WS_URL?.trim() ||
     process.env.NEXT_PUBLIC_WS_URL?.trim()?.replace(/\/ws\/game\/?$/i, "/ws/game-preview/") ||
     PRODUCTION_PREVIEW_WS;
+  if (
+    isLocalhostWs(env) &&
+    (process.env.VERCEL || process.env.NODE_ENV === "production")
+  ) {
+    return PRODUCTION_PREVIEW_WS;
+  }
   if (typeof window !== "undefined") {
     return rewriteLocalWs(env, window.location.hostname, "/ws/game-preview/");
   }
