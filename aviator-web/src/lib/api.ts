@@ -38,13 +38,13 @@ async function authHeaders() {
 
 export type UserProfile = {
   username: string;
+  public_uid?: string;
   firebase_uid: string;
   platform_type: "WEB" | "APP";
   fake_wallet_balance: string;
   invite_code?: string;
   total_bonus?: string;
   today_bonus?: string;
-  phone?: string;
 };
 
 export type WalletLimits = {

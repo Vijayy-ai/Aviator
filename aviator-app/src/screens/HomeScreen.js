@@ -17,6 +17,7 @@ import { auth, db } from '../config/firebase';
 import { ADMIN_EMAIL, ADMIN_EMAILS } from '../config/constants';
 import { addAllGames } from '../utils/addGames';
 import { getGameImageSource, cleanGameImageUrl, needsImageUrlFix } from '../utils/gameImage';
+import { isTcLotteryGame, TC_LOTTERY_TITLE } from '../utils/tcLottery';
 import { useTheme } from '../theme/ThemeContext';
 import { 
   getFontSize, 
@@ -96,28 +97,48 @@ export default function HomeScreen({ navigation }) {
         ...gameDoc.data(),
       }));
 
-      // Auto-create Aviator game if it is missing
-      const hasAviator = gamesData.some(game => game.title && game.title.toLowerCase() === 'aviator');
-      if (!hasAviator) {
+      // Rename legacy "Aviator" → "Tc Lottery" (display branding only)
+      const renameFixes = [];
+      gamesData = gamesData.map((game) => {
+        if (!game.title || game.title.trim().toLowerCase() !== 'aviator') return game;
+        renameFixes.push(
+          updateDoc(doc(db, 'games', game.id), {
+            title: TC_LOTTERY_TITLE,
+            description: game.description || 'Live AI-powered auto prediction for Tc Lottery',
+            updatedAt: new Date(),
+          }).catch(() => {})
+        );
+        return {
+          ...game,
+          title: TC_LOTTERY_TITLE,
+          description: game.description || 'Live AI-powered auto prediction for Tc Lottery',
+        };
+      });
+      if (renameFixes.length) {
+        Promise.all(renameFixes).then(() => {
+        });
+      }
+
+      // Auto-create Tc Lottery game if it is missing
+      const hasTcLottery = gamesData.some((game) => isTcLotteryGame(game.title));
+      if (!hasTcLottery) {
         try {
-          console.log('Aviator game not found, auto-creating in Firestore...');
-          const newAviatorGame = {
-            title: "Aviator",
-            description: "Live AI-powered auto prediction for Aviator game",
-            imageUrl: "assets/icon.png",
-            gameLink: "https://1winonline.in/",
+          const newTcLotteryGame = {
+            title: TC_LOTTERY_TITLE,
+            description: 'Live AI-powered auto prediction for Tc Lottery',
+            imageUrl: 'assets/lllll.jpeg',
+            gameLink: 'https://1winonline.in/',
             isPinned: true,
             createdAt: new Date(),
-            adminPredictions: []
+            adminPredictions: [],
           };
-          const docRef = await addDoc(collection(db, 'games'), newAviatorGame);
+          const docRef = await addDoc(collection(db, 'games'), newTcLotteryGame);
           gamesData.push({
             id: docRef.id,
-            ...newAviatorGame
+            ...newTcLotteryGame,
           });
-          console.log('Aviator game created successfully!');
         } catch (createErr) {
-          console.error('Failed to auto-create Aviator game:', createErr);
+          console.error('Failed to auto-create Tc Lottery game:', createErr);
         }
       }
 
@@ -136,7 +157,6 @@ export default function HomeScreen({ navigation }) {
       });
       if (urlFixes.length) {
         Promise.all(urlFixes).then(() => {
-          console.log(`Fixed ${urlFixes.length} Uploadcare image URL(s)`);
         });
       }
 
@@ -209,7 +229,7 @@ export default function HomeScreen({ navigation }) {
         item.isPinned && styles.pinnedCard
       ]}
       onPress={() => {
-        if (item.title && item.title.toLowerCase() === 'aviator') {
+        if (isTcLotteryGame(item.title)) {
           navigation.navigate('Prediction', { game: item });
         } else {
           navigation.navigate('Game', { game: item });

@@ -65,7 +65,6 @@ export default function AdminPanelScreen({ navigation }) {
         setTelegramUrl('https://t.me/Aviator_Predictor_V5');
       }
     } catch (error) {
-      console.log('Error fetching telegram settings:', error);
       setTelegramUrl('https://t.me/Aviator_Predictor_V5');
     } finally {
       setLoading(false);

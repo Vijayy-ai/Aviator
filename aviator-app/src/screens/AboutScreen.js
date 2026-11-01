@@ -86,7 +86,6 @@ export default function AboutScreen({ navigation }) {
           setTelegramLink(snap.data().url);
         }
       } catch (e) {
-        console.log('Error fetching telegram on About:', e);
       }
     })();
   }, []);

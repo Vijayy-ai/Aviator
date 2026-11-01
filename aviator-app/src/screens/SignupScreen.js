@@ -55,7 +55,6 @@ export default function SignupScreen({ navigation }) {
         }
       }
     } catch (error) {
-      console.log('Error fetching telegram link on SignupScreen:', error);
     }
   };
 

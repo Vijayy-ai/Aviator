@@ -7,21 +7,26 @@ import {
   ScrollView,
   Linking,
   Animated,
-  Dimensions,
-  Platform,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { useTheme } from '../theme/ThemeContext';
-import { 
-  getFontSize, 
-  getSpacing, 
-  getButtonHeight, 
-  safeAreaTop, 
-  safeAreaBottom,
+import {
+  getFontSize,
+  getSpacing,
+  getButtonHeight,
+  safeAreaTop,
+  responsiveWidth,
+  getPredictionCircleSize,
+  getPredictionFontSize,
 } from '../utils/responsive';
+import { TC_LOTTERY_TITLE, isTcLotteryGame } from '../utils/tcLottery';
+
+const PREDICTION_CIRCLE = getPredictionCircleSize();
+const PREDICTION_FONT = getPredictionFontSize();
 
 /** Same host the website uses for live rounds. */
 const LIVE_API = 'https://aviator-fcon.onrender.com';
@@ -35,16 +40,23 @@ export default function PredictionScreen({ route, navigation }) {
   const { theme } = useTheme();
   const { game } = route.params;
 
-  const [prediction, setPrediction] = useState('—');
+  // Displayed values — only updated when user taps Get Prediction (or cleared on round change)
+  const [prediction, setPrediction] = useState('');
   const [predictedRound, setPredictedRound] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isWaitingForData, setIsWaitingForData] = useState(false);
   const [linkStatus, setLinkStatus] = useState('connecting');
   const [telegramLink, setTelegramLink] = useState(DEFAULT_TELEGRAM);
   const [scaleAnim] = useState(new Animated.Value(1));
 
-  const lastRoundRef = useRef(null);
+  // Background sync buffer — always tracks the live site; never drives the UI alone
+  const syncedRef = useRef({ round: null, crash: null, ready: false });
+  const revealedRoundRef = useRef(null);
   const animTimerRef = useRef(null);
   const pullNowRef = useRef(() => {});
+  const revealInFlightRef = useRef(false);
+
+  const displayTitle = isTcLotteryGame(game?.title) ? TC_LOTTERY_TITLE : (game?.title || TC_LOTTERY_TITLE);
 
   useEffect(() => {
     const fetchTelegramLink = async () => {
@@ -55,24 +67,27 @@ export default function PredictionScreen({ route, navigation }) {
           if (data?.url) setTelegramLink(data.url);
         }
       } catch (error) {
-        console.log('Error fetching telegram link on PredictionScreen:', error);
       }
     };
     fetchTelegramLink();
   }, []);
 
-  const startPredictionAnimation = (finalValueStr) => {
+  const startPredictionAnimation = (finalValueStr, roundNumber) => {
     if (animTimerRef.current) clearInterval(animTimerRef.current);
     setIsGenerating(true);
-    const finalValue = parseFloat(finalValueStr.replace('X', ''));
-    let current = 1.00;
+    setIsWaitingForData(false);
+    setPredictedRound(`Round ${roundNumber}`);
+    revealedRoundRef.current = roundNumber;
+
+    const finalValue = parseFloat(String(finalValueStr).replace(/X/gi, ''));
+    let current = 1.0;
     const steps = 15;
-    const increment = (finalValue - 1.00) / steps;
+    const increment = (finalValue - 1.0) / steps;
     let stepCount = 0;
 
     Animated.sequence([
       Animated.timing(scaleAnim, { toValue: 1.15, duration: 150, useNativeDriver: true }),
-      Animated.timing(scaleAnim, { toValue: 1.0, duration: 150, useNativeDriver: true })
+      Animated.timing(scaleAnim, { toValue: 1.0, duration: 150, useNativeDriver: true }),
     ]).start();
 
     animTimerRef.current = setInterval(() => {
@@ -84,22 +99,34 @@ export default function PredictionScreen({ route, navigation }) {
         animTimerRef.current = null;
         setPrediction(finalValue.toFixed(2) + 'X');
         setIsGenerating(false);
+        revealInFlightRef.current = false;
       } else {
         setPrediction(current.toFixed(2) + 'X');
       }
     }, 70);
   };
 
+  const clearDisplayedPrediction = () => {
+    if (animTimerRef.current) {
+      clearInterval(animTimerRef.current);
+      animTimerRef.current = null;
+    }
+    revealedRoundRef.current = null;
+    revealInFlightRef.current = false;
+    setIsGenerating(false);
+    setIsWaitingForData(false);
+    setPrediction('');
+    setPredictedRound('');
+  };
+
   // Stay on the same live engine as the website. Never advance a local round clock.
+  // Sync only updates the buffer — UI reveal is controlled by Get Prediction.
   useEffect(() => {
     let cancelled = false;
     let waitTimer = null;
     let inFlight = null;
 
     const applyState = (state) => {
-      // Same round as web: when round 5 starts (waiting buffer / live), show round 5.
-      // After it crashes, when round 6's start buffer begins, then show round 6.
-      // Never jump ahead to next-next while the current round is still playing.
       const roundNumber = Number(state.round_number);
       const crashPoint = Number(
         state.status === 'crashed' && state.crash_point != null
@@ -111,17 +138,29 @@ export default function PredictionScreen({ route, navigation }) {
       }
 
       setLinkStatus('live');
-      if (lastRoundRef.current !== roundNumber) {
-        lastRoundRef.current = roundNumber;
-        setPredictedRound(`Round ${roundNumber}`);
-        startPredictionAnimation(crashPoint.toFixed(2) + 'X');
+      setIsWaitingForData(false);
+
+      const prevRound = syncedRef.current.round;
+      syncedRef.current = {
+        round: roundNumber,
+        crash: crashPoint,
+        ready: true,
+      };
+
+      // Round advanced: do not overwrite a revealed prediction with another round's data.
+      // Clear the display so the user must tap Get Prediction for the new round.
+      if (prevRound != null && prevRound !== roundNumber) {
+        if (revealedRoundRef.current != null && revealedRoundRef.current !== roundNumber) {
+          clearDisplayedPrediction();
+        }
       }
+
       return true;
     };
 
     const pull = async () => {
       if (cancelled || inFlight) return;
-      const hadLock = lastRoundRef.current != null;
+      const hadLock = syncedRef.current.round != null;
       const controller = new AbortController();
       const timeoutId = setTimeout(
         () => controller.abort(),
@@ -144,7 +183,7 @@ export default function PredictionScreen({ route, navigation }) {
         clearTimeout(timeoutId);
         const abortedForRefresh = err?.name === 'AbortError' && inFlight !== controller;
         if (cancelled || abortedForRefresh) return;
-        setLinkStatus(lastRoundRef.current != null ? 'reconnecting' : 'connecting');
+        setLinkStatus(syncedRef.current.round != null ? 'reconnecting' : 'connecting');
         waitTimer = setTimeout(pull, RETRY_MS);
       } finally {
         if (inFlight === controller) inFlight = null;
@@ -170,69 +209,130 @@ export default function PredictionScreen({ route, navigation }) {
     };
   }, []);
 
+  const handleGetPrediction = () => {
+    if (revealInFlightRef.current || isGenerating) {
+      return;
+    }
+
+    const snap = syncedRef.current;
+    if (!snap.ready || snap.round == null || snap.crash == null) {
+      setIsWaitingForData(true);
+      setPrediction('');
+      setPredictedRound('');
+      Alert.alert(
+        'Please wait',
+        linkStatus === 'reconnecting'
+          ? 'Reconnecting to live rounds. Try again in a moment.'
+          : 'Prediction for the current round is not ready yet. Please wait for sync.'
+      );
+      return;
+    }
+
+    // Snapshot at click time so a mid-animation poll cannot mix rounds
+    const roundNumber = snap.round;
+    const crashPoint = snap.crash;
+    revealInFlightRef.current = true;
+    startPredictionAnimation(crashPoint.toFixed(2) + 'X', roundNumber);
+  };
+
   const goToGame = () => {
     if (game.gameLink) {
       Linking.openURL(game.gameLink);
+    } else {
+      Alert.alert('Error', 'Game link not available');
     }
   };
 
+  const handleCodeAlreadyApplied = () => {
+    Alert.alert('Info', 'Code already applied', [{ text: 'OK' }]);
+  };
+
+  const showSpinner =
+    isWaitingForData ||
+    (linkStatus === 'connecting' && !syncedRef.current.ready && !prediction);
+
+  // Same default as other games (GameScreen demoPrediction)
+  const displayPrediction = prediction || '1.00x';
+
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
-      {/* Premium Header */}
       <View style={[styles.header, { backgroundColor: theme.colors.surface, borderBottomColor: theme.colors.border }]}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
           <Ionicons name="arrow-back" size={getFontSize(24)} color={theme.colors.text} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: theme.colors.text }]}>{game.title}</Text>
+        <Text style={[styles.headerTitle, { color: theme.colors.text }]}>{displayTitle}</Text>
         <TouchableOpacity onPress={() => pullNowRef.current()} style={styles.refreshButton}>
           <Ionicons name="refresh" size={getFontSize(24)} color={theme.colors.text} />
         </TouchableOpacity>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false} bounces={false}>
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        bounces={false}
+      >
         <Text style={[styles.gameSubtitle, { color: '#990000' }]}>Aviator predictor v5.0</Text>
         <Text style={[styles.gameDescription, { color: theme.colors.textSecondary }]}>
-          {game.description || 'AI prediction model online'}
+          {game.description || 'Get AI-powered predictions for this hack'}
         </Text>
 
-        {/* Clean Top LIVE PREDICTION badge as requested */}
-        <View style={styles.liveIndicatorContainer}>
-          <View style={[styles.greenDot, linkStatus !== 'live' && styles.waitingDot]} />
-          <Text style={[styles.liveIndicatorText, linkStatus !== 'live' && styles.waitingText]}>
-            {linkStatus === 'live' ? 'LIVE PREDICTION' : linkStatus === 'reconnecting' ? 'RECONNECTING' : 'CONNECTING'}
-          </Text>
-        </View>
-
-        {/* Circular Live Sync Display */}
+        {/* Same big centered 1.00x area as other games (transparent — no visible ring) */}
         <View style={styles.predictionButtonContainer}>
-          <Animated.View style={[styles.predictionButton, { transform: [{ scale: scaleAnim }] }]}>
+          <Animated.View
+            style={[styles.predictionButton, { transform: [{ scale: scaleAnim }] }]}
+          >
             <View style={styles.predictionButtonInner}>
               <View style={styles.predictionContent}>
-                {linkStatus === 'connecting' && prediction === '—' ? (
+                {showSpinner && !prediction ? (
                   <ActivityIndicator color="#FF6B9D" />
                 ) : (
-                  <Text style={styles.predictionValue}>
-                    {prediction}
+                  <Text
+                    style={styles.predictionValue}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.45}
+                  >
+                    {displayPrediction}
                   </Text>
                 )}
-                {/* Removed predictedRound text as requested */}
               </View>
             </View>
           </Animated.View>
         </View>
 
-        {/* Removed status text as requested */}
-
-        {/* Only "Go to Game" button as requested */}
         <View style={styles.buttonsContainer}>
-          <TouchableOpacity style={[styles.actionButton, { backgroundColor: theme.colors.success }]} onPress={goToGame}>
+          <TouchableOpacity
+            style={[styles.actionButton, { backgroundColor: '#990000' }, isGenerating && styles.buttonDisabled]}
+            onPress={handleGetPrediction}
+            disabled={isGenerating}
+          >
+            <Ionicons name="analytics" size={getFontSize(20)} color="white" />
+            <Text style={styles.actionButtonText}>
+              {isGenerating ? 'Generating...' : 'Get Prediction'}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.actionButton, { backgroundColor: theme.colors.success }]}
+            onPress={goToGame}
+          >
             <Ionicons name="game-controller" size={getFontSize(20)} color="white" />
             <Text style={styles.actionButtonText}>Go to Game</Text>
           </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.actionButton, { backgroundColor: theme.colors.textSecondary }]}
+            onPress={handleCodeAlreadyApplied}
+          >
+            <Ionicons name="checkmark-circle" size={getFontSize(20)} color="white" />
+            <Text style={styles.actionButtonText}>Code Already Applied</Text>
+          </TouchableOpacity>
         </View>
+
+        <View style={styles.bottomSpacing} />
       </ScrollView>
 
-      {/* Bottom Fixed Footer Telegram Redirect */}
       <View style={[styles.telegramContainer, { backgroundColor: theme.colors.surface, borderTopColor: theme.colors.border }]}>
         <TouchableOpacity style={styles.telegramButton} onPress={() => Linking.openURL(telegramLink)}>
           <Text style={[styles.telegramText, { color: theme.colors.text }]}>Join our telegram</Text>
@@ -257,7 +357,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
   },
   headerTitle: {
-    fontSize: getFontSize(22),
+    fontSize: getFontSize(20),
     fontWeight: 'bold',
   },
   backButton: {
@@ -266,126 +366,103 @@ const styles = StyleSheet.create({
   refreshButton: {
     padding: getSpacing(4),
   },
+  scrollView: {
+    flex: 1,
+  },
   scrollContent: {
-    paddingHorizontal: getSpacing(24),
-    paddingTop: getSpacing(24),
-    alignItems: 'center',
-    paddingBottom: getSpacing(100),
+    paddingHorizontal: getSpacing(20),
+    paddingTop: getSpacing(20),
+    paddingBottom: getSpacing(80),
   },
   gameSubtitle: {
-    fontSize: getFontSize(22),
-    fontWeight: '900',
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
-    marginBottom: getSpacing(8),
+    fontSize: getFontSize(24),
+    fontWeight: 'bold',
+    marginBottom: getSpacing(16),
+    marginTop: getSpacing(20),
     textAlign: 'center',
   },
   gameDescription: {
-    fontSize: getFontSize(14),
+    fontSize: getFontSize(16),
+    marginBottom: getSpacing(20),
+    marginTop: getSpacing(10),
+    lineHeight: getFontSize(22),
     textAlign: 'center',
-    marginBottom: getSpacing(24),
-    lineHeight: getSpacing(20),
-  },
-  liveIndicatorContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(52, 199, 89, 0.1)',
-    paddingVertical: getSpacing(6),
-    paddingHorizontal: getSpacing(16),
-    borderRadius: getSpacing(20),
-    marginBottom: getSpacing(30),
-  },
-  greenDot: {
-    width: getSpacing(8),
-    height: getSpacing(8),
-    borderRadius: getSpacing(4),
-    backgroundColor: '#34C759',
-    marginRight: getSpacing(8),
-  },
-  waitingDot: {
-    backgroundColor: '#FF9F0A',
-  },
-  liveIndicatorText: {
-    color: '#34C759',
-    fontSize: getFontSize(12),
-    fontWeight: '900',
-    letterSpacing: 1.0,
-  },
-  waitingText: {
-    color: '#FF9F0A',
   },
   predictionButtonContainer: {
-    marginVertical: getSpacing(20),
-    justifyContent: 'center',
     alignItems: 'center',
+    marginTop: getSpacing(20),
+    marginBottom: getSpacing(20),
   },
   predictionButton: {
-    width: Dimensions.get('window').width * 0.6,
-    height: Dimensions.get('window').width * 0.6,
-    maxWidth: 240,
-    maxHeight: 240,
-    borderRadius: 120,
-    backgroundColor: '#1E1E1E',
+    width: PREDICTION_CIRCLE,
+    height: PREDICTION_CIRCLE,
+    borderRadius: PREDICTION_CIRCLE / 2,
+    backgroundColor: 'transparent',
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 4,
-    borderColor: '#FF6B9D',
-    shadowColor: '#FF6B9D',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.4,
-    shadowRadius: 15,
-    elevation: 8,
   },
   predictionButtonInner: {
-    width: '92%',
-    height: '92%',
-    borderRadius: 110,
-    backgroundColor: '#121212',
+    width: '88%',
+    height: '88%',
     justifyContent: 'center',
     alignItems: 'center',
   },
   predictionContent: {
+    width: '100%',
+    paddingHorizontal: getSpacing(8),
     justifyContent: 'center',
     alignItems: 'center',
   },
   predictionValue: {
-    fontSize: getFontSize(42),
+    width: '100%',
+    fontSize: PREDICTION_FONT,
     fontWeight: '900',
     color: '#FFFFFF',
-    fontFamily: Platform.OS === 'ios' ? 'Helvetica Neue' : 'sans-serif-condensed',
+    textAlign: 'center',
+    includeFontPadding: false,
   },
   predictionLabel: {
-    fontSize: getFontSize(14),
-    fontWeight: 'bold',
-  },
-  statusText: {
-    fontSize: getFontSize(12),
-    marginTop: getSpacing(16),
-    fontStyle: 'italic',
+    fontSize: getFontSize(13),
+    fontWeight: '700',
     textAlign: 'center',
   },
   buttonsContainer: {
-    width: '100%',
-    marginTop: getSpacing(40),
-    gap: getSpacing(16),
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: getSpacing(20),
+    paddingBottom: getSpacing(20),
+    marginTop: getSpacing(30),
   },
   actionButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: getSpacing(16),
+    paddingHorizontal: getSpacing(24),
     borderRadius: getSpacing(12),
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
+    marginBottom: getSpacing(16),
+    width: '100%',
+    maxWidth: responsiveWidth(85),
+    minHeight: getButtonHeight(),
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
   },
+  buttonDisabled: {
+    opacity: 0.6,
+  },
   actionButtonText: {
     color: 'white',
     fontSize: getFontSize(16),
-    fontWeight: 'bold',
-    marginLeft: getSpacing(10),
+    fontWeight: '600',
+    marginLeft: getSpacing(8),
+  },
+  bottomSpacing: {
+    height: getSpacing(20),
   },
   telegramContainer: {
     position: 'absolute',

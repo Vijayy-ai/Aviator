@@ -14,6 +14,7 @@ import { PLAYER_FACES } from "@/lib/live-round-bets";
 
 type Profile = {
   username: string;
+  public_uid?: string;
   firebase_uid: string;
   platform_type: "WEB" | "APP";
   fake_wallet_balance: string;
@@ -155,14 +156,14 @@ export default function AccountPage() {
               <div className="flex min-w-0 items-center gap-2">
                 {!editing ? (
                   <div className="min-w-0 truncate text-base font-extrabold tracking-tight">
-                    {profile?.username || user.displayName || "MEMBER"}
+                    {profile?.username || "Player"}
                   </div>
                 ) : (
                   <input
                     value={nameDraft}
                     onChange={(e) => setNameDraft(e.target.value)}
                     className="min-w-0 flex-1 rounded-xl bg-white/20 px-3 py-2 text-sm font-bold text-white placeholder:text-white/70 outline-none ring-1 ring-white/30"
-                    placeholder="Enter name"
+                    placeholder="Display name"
                     autoFocus
                   />
                 )}
@@ -183,6 +184,9 @@ export default function AccountPage() {
                     {saving ? "Saving..." : "Save"}
                   </button>
                 ) : null}
+              </div>
+              <div className="mt-1 text-xs font-semibold tracking-wide text-white/80">
+                UID {profile?.public_uid || "————————"}
               </div>
             </div>
           </div>

@@ -15,6 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { collection, addDoc, getDocs, query, where, orderBy, deleteDoc, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { useTheme } from '../../theme/ThemeContext';
+import { getFontSize, getSpacing, safeAreaTop } from '../../utils/responsive';
 
 // Memoized Approval Item Component
 const ApprovalItem = React.memo(({ item, theme, onApprove, onReject, getGameTitle }) => (
@@ -739,29 +740,29 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 60,
-    paddingBottom: 20,
+    paddingHorizontal: getSpacing(16),
+    paddingTop: safeAreaTop + getSpacing(12),
+    paddingBottom: getSpacing(14),
     borderBottomWidth: 1,
   },
   headerTitle: {
-    fontSize: 20,
+    fontSize: getFontSize(18),
     fontWeight: 'bold',
   },
   addButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: getSpacing(40),
+    height: getSpacing(40),
+    borderRadius: getSpacing(20),
     justifyContent: 'center',
     alignItems: 'center',
   },
   codesList: {
-    padding: 16,
+    padding: getSpacing(12),
   },
   codeCard: {
-    borderRadius: 12,
-    marginBottom: 16,
-    padding: 16,
+    borderRadius: getSpacing(12),
+    marginBottom: getSpacing(12),
+    padding: getSpacing(12),
     paddingRight: 50, // Add right padding for delete button
     shadowOffset: {
       width: 0,

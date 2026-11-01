@@ -411,12 +411,9 @@ const games = [
 
 export const addAllGames = async () => {
   try {
-    console.log('Starting to add games...');
     for (const game of games) {
       await addDoc(collection(db, 'games'), game);
-      console.log(`Added game: ${game.title}`);
     }
-    console.log('All games added successfully!');
   } catch (error) {
     console.error('Error adding games:', error);
   }

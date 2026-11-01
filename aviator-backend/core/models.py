@@ -9,6 +9,7 @@ class UserProfile(models.Model):
 
     firebase_uid = models.CharField(max_length=128, unique=True)
     username = models.CharField(max_length=150, blank=True)
+    public_uid = models.CharField(max_length=8, unique=True, null=True, blank=True, db_index=True)
     platform_type = models.CharField(max_length=3, choices=PlatformType.choices)
     fake_wallet_balance = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     phone = models.CharField(max_length=32, blank=True, default="")

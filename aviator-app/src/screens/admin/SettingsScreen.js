@@ -98,7 +98,6 @@ export default function SettingsScreen() {
         // Step 1: Re-authenticate user programmatically to prevent requires-recent-login error
         const credential = EmailAuthProvider.credential(user.email, currentPassword);
         await reauthenticateWithCredential(user, credential);
-        console.log('🔑 Re-authentication successful for:', user.email);
 
         // Step 2: Change password
         await updatePassword(user, newPassword);

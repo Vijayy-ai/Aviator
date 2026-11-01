@@ -5,6 +5,7 @@
  */
 
 import { CLOUDINARY_BY_UPLOADCARE_UUID } from '../config/cloudinaryUuidMap';
+import { isTcLotteryGame } from './tcLottery';
 
 const UCARE_UUID =
   /(?:https?:\/\/)?(?:www\.)?ucarecdn\.com\/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i;
@@ -49,8 +50,8 @@ export function needsImageUrlFix(url) {
 }
 
 export function getGameImageSource(title, imageUrl) {
-  if (title && String(title).toLowerCase() === 'aviator') {
-    return require('../../assets/icon.png');
+  if (isTcLotteryGame(title)) {
+    return require('../../assets/lllll.jpeg');
   }
 
   const cleaned = cleanGameImageUrl(imageUrl);

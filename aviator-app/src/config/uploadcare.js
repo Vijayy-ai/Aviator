@@ -21,14 +21,8 @@ export const UPLOADCARE_CONFIG = {
  * @returns {Promise<string>} - The Uploadcare CDN URL of the uploaded image
  */
 export const uploadToUploadcare = async (imageUri) => {
-  console.log('🚀 Starting Uploadcare upload for:', imageUri);
   
   try {
-    console.log('📋 Using Uploadcare configuration:');
-    console.log('   - Public Key:', UPLOADCARE_CONFIG.publicKey);
-    console.log('   - Upload URL:', UPLOADCARE_CONFIG.uploadUrl);
-    console.log('   - Store Auto:', UPLOADCARE_CONFIG.storeAuto);
-    console.log('   - Image Size:', UPLOADCARE_CONFIG.imageProcessing.size);
     
     const formData = new FormData();
     
@@ -43,13 +37,11 @@ export const uploadToUploadcare = async (imageUri) => {
     formData.append('UPLOADCARE_PUB_KEY', UPLOADCARE_CONFIG.publicKey);
     formData.append('UPLOADCARE_STORE', UPLOADCARE_CONFIG.storeAuto);
 
-    console.log('📤 Sending request to Uploadcare...');
     const response = await fetch(UPLOADCARE_CONFIG.uploadUrl, {
       method: 'POST',
       body: formData,
     });
 
-    console.log('📡 Uploadcare response status:', response.status);
     
     if (!response.ok) {
       const errorText = await response.text();
@@ -58,13 +50,10 @@ export const uploadToUploadcare = async (imageUri) => {
     }
     
     const data = await response.json();
-    console.log('📡 Uploadcare response data:', data);
 
     if (data.file) {
       // Use simple URL without transformations - Uploadcare will serve the original image
       const imageUrl = `https://ucarecdn.com/${data.file}/`;
-      console.log('✅ Upload successful!');
-      console.log('🔗 Image URL:', imageUrl);
       return imageUrl;
     } else {
       console.error('❌ Uploadcare upload failed:', data);

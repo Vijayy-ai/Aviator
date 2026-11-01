@@ -19,13 +19,26 @@ export const safeAreaBottom = Platform.OS === 'ios' ? 34 : 0;
 export const responsiveWidth = (percentage) => (screenWidth * percentage) / 100;
 export const responsiveHeight = (percentage) => (screenHeight * percentage) / 100;
 
-// Font sizes
+// Font sizes — keep large display numbers from growing too much on phones
 export const getFontSize = (size) => {
-  if (isSmallDevice) return size * 0.9;
-  if (isMediumDevice) return size;
-  if (isLargeDevice) return size * 1.1;
-  if (isTablet) return size * 1.2;
+  if (isTablet) return size * 1.15;
+  if (isSmallDevice) return size * 0.88;
+  // Medium / large phones: avoid bumping big fonts (breaks circles like "14.80X")
+  if (size >= 36) return size;
+  if (isLargeDevice) return size * 1.05;
   return size;
+};
+
+/** Circle diameter for prediction multiplier display */
+export const getPredictionCircleSize = () => {
+  const size = Math.min(responsiveWidth(52), 220);
+  return Math.max(size, 160);
+};
+
+/** Font size that fits "99.99X" inside the prediction circle */
+export const getPredictionFontSize = () => {
+  const circle = getPredictionCircleSize();
+  return Math.min(Math.round(circle * 0.26), 40);
 };
 
 // Spacing

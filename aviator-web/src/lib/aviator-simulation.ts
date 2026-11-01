@@ -15,10 +15,9 @@ function round2(n: number) {
   return Math.round(n * 100) / 100;
 }
 
-/** Multiplier growth — matches real Aviator timing.
- *  1.09x ≈ 3.5s, 1.50x ≈ 9.2s, 2.0x ≈ 12.5s, 5.0x ≈ 20s, 10x ≈ 27s, 20x ≈ 31s */
+/** Multiplier growth — matches Django game engine (smoother late-round pace). */
 function multiplierAtElapsed(elapsed: number) {
-  const raw = Math.exp(0.0035 * elapsed * elapsed + 0.012 * elapsed);
+  const raw = Math.exp(0.00045 * elapsed * elapsed + 0.055 * elapsed);
   return round2(raw);
 }
 

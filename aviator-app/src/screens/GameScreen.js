@@ -18,6 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { collection, addDoc, getDocs, query, where, doc, getDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { db, auth } from '../config/firebase';
 import { useTheme } from '../theme/ThemeContext';
+import { isTcLotteryGame } from '../utils/tcLottery';
 import { 
   getFontSize, 
   getSpacing, 
@@ -26,11 +27,16 @@ import {
   safeAreaBottom,
   responsiveWidth,
   responsiveHeight,
+  getPredictionCircleSize,
+  getPredictionFontSize,
   isSmallDevice,
   isMediumDevice,
   isLargeDevice,
   isTablet
 } from '../utils/responsive';
+
+const PREDICTION_CIRCLE = getPredictionCircleSize();
+const PREDICTION_FONT = getPredictionFontSize();
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -65,18 +71,9 @@ export default function GameScreen({ route, navigation }) {
   useEffect(() => {
     fetchTelegramLink();
 
-    if (game.title && game.title.toLowerCase() === 'aviator') {
+    if (isTcLotteryGame(game.title)) {
+      // Live sync lives on PredictionScreen; keep GameScreen activation UX only.
       setIsActivated(true);
-      // Fetch live predictions immediately on mount
-      fetchLiveAviatorPrediction();
-      // Start auto-sync polling every 3 seconds
-      const pollInterval = setInterval(() => {
-        fetchLiveAviatorPrediction();
-      }, 3000);
-
-      return () => {
-        clearInterval(pollInterval);
-      };
     } else {
       checkActivationStatus();
       checkPendingStatus();
@@ -94,7 +91,6 @@ export default function GameScreen({ route, navigation }) {
         }
       }
     } catch (error) {
-      console.log('Error fetching telegram link on GameScreen:', error);
     }
   };
 
@@ -132,7 +128,6 @@ export default function GameScreen({ route, navigation }) {
         }
       }
     } catch (err) {
-      console.log('Error fetching live Aviator predictions:', err);
     } finally {
       aviatorPollRef.current = false;
     }
@@ -166,7 +161,6 @@ export default function GameScreen({ route, navigation }) {
           try {
             const codeDoc = await getDoc(doc(db, 'codes', activation.codeId));
             if (!codeDoc.exists()) {
-              console.log('Code deleted, deactivating game');
               // Code was deleted, deactivate the game
               await deleteDoc(doc(db, 'activatedGames', querySnapshot.docs[0].id));
               setIsActivated(false);
@@ -178,7 +172,6 @@ export default function GameScreen({ route, navigation }) {
             const codeData = codeDoc.data();
             const isAdminCode = codeData.isAdminCode || false;
             setIsAdminActivated(isAdminCode);
-            console.log('Code type check:', { isAdminCode, codeData });
           } catch (error) {
             console.error('Error checking code status:', error);
             // If we can't verify the code, deactivate for safety
@@ -193,11 +186,9 @@ export default function GameScreen({ route, navigation }) {
         }
         
         setIsActivated(true);
-        console.log('Game activated:', activation);
       } else {
         setIsActivated(false);
         setIsAdminActivated(false);
-        console.log('Game not activated');
       }
     } catch (error) {
       console.error('Error checking activation status:', error);
@@ -219,7 +210,6 @@ export default function GameScreen({ route, navigation }) {
       
       if (!querySnapshot.empty) {
         setIsPending(true);
-        console.log('Found pending activation for this game');
       } else {
         setIsPending(false);
       }
@@ -316,7 +306,6 @@ export default function GameScreen({ route, navigation }) {
           predictionIndex: 0
         });
 
-        console.log(`Admin code activated instantly for ${game.title} by user ${userId}`);
         setShowActivationModal(false);
         setActivationCode('');
         setIsActivated(true);
@@ -337,10 +326,8 @@ export default function GameScreen({ route, navigation }) {
           status: 'pending'
         };
         
-        console.log('Saving pending activation:', pendingActivation);
         await addDoc(collection(db, 'pendingActivations'), pendingActivation);
 
-        console.log(`Pending activation request for ${game.title} by user ${userId}`);
         setShowActivationModal(false);
         setActivationCode('');
         setIsPending(true);
@@ -645,18 +632,12 @@ export default function GameScreen({ route, navigation }) {
         showsVerticalScrollIndicator={false}
         bounces={false}
       >
-        <Text style={[styles.gameSubtitle, { color: '#990000' }]}>Aviator predictor v5.0</Text>
+        <Text style={[styles.gameSubtitle, { color: '#990000' }]}>
+          {isTcLotteryGame(game.title) ? 'Tc Lottery predictor v5.0' : 'Aviator predictor v5.0'}
+        </Text>
         <Text style={[styles.gameDescription, { color: theme.colors.textSecondary }]}>
           {game.description || 'Get AI-powered predictions for this hack'}
         </Text>
-
-        {/* Live Indicator Badge for Aviator */}
-        {game.title && game.title.toLowerCase() === 'aviator' && (
-          <View style={styles.liveIndicatorContainer}>
-            <View style={styles.greenDot} />
-            <Text style={styles.liveIndicatorText}>LIVE BACKEND SYNC</Text>
-          </View>
-        )}
 
         {/* Circular Prediction Display - Always visible */}
         <View style={styles.predictionButtonContainer}>
@@ -675,21 +656,46 @@ export default function GameScreen({ route, navigation }) {
             <View style={styles.predictionButtonInner}>
               {isGenerating ? (
                 <View style={styles.predictionContent}>
-                  <Text style={styles.predictionValue}>{prediction}</Text>
+                  <Text
+                    style={styles.predictionValue}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.45}
+                  >
+                    {prediction}
+                  </Text>
                   {predictedRound ? (
-                    <Text style={[styles.predictionLabel, { color: '#FF6B9D', marginTop: 8 }]}>{predictedRound}</Text>
+                    <Text style={[styles.predictionLabel, { color: '#FF6B9D', marginTop: 6 }]} numberOfLines={1}>
+                      {predictedRound}
+                    </Text>
                   ) : null}
                 </View>
               ) : prediction ? (
                 <View style={styles.predictionContent}>
-                  <Text style={styles.predictionValue}>{prediction}</Text>
+                  <Text
+                    style={styles.predictionValue}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.45}
+                  >
+                    {prediction}
+                  </Text>
                   {predictedRound ? (
-                    <Text style={[styles.predictionLabel, { color: '#FF6B9D', marginTop: 8 }]}>{predictedRound}</Text>
+                    <Text style={[styles.predictionLabel, { color: '#FF6B9D', marginTop: 6 }]} numberOfLines={1}>
+                      {predictedRound}
+                    </Text>
                   ) : null}
                 </View>
               ) : (
                 <View style={styles.predictionContent}>
-                  <Text style={styles.predictionValue}>{demoPrediction}</Text>
+                  <Text
+                    style={styles.predictionValue}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.45}
+                  >
+                    {demoPrediction}
+                  </Text>
                 </View>
               )}
             </View>
@@ -698,21 +704,17 @@ export default function GameScreen({ route, navigation }) {
 
         {/* Centered Buttons Section */}
         <View style={styles.buttonsContainer}>
-          {game.title && game.title.toLowerCase() !== 'aviator' && (
-            /* Get Prediction Button */
-            <TouchableOpacity
-              style={[styles.actionButton, { backgroundColor: '#990000' }, isGenerating && styles.buttonDisabled]}
-              onPress={handleGetPrediction}
-              disabled={isGenerating}
-            >
-              <Ionicons name="analytics" size={getFontSize(20)} color="white" />
-              <Text style={styles.actionButtonText}>
-                {isGenerating ? 'Generating...' : 'Get Prediction'}
-              </Text>
-            </TouchableOpacity>
-          )}
+          <TouchableOpacity
+            style={[styles.actionButton, { backgroundColor: '#990000' }, isGenerating && styles.buttonDisabled]}
+            onPress={handleGetPrediction}
+            disabled={isGenerating}
+          >
+            <Ionicons name="analytics" size={getFontSize(20)} color="white" />
+            <Text style={styles.actionButtonText}>
+              {isGenerating ? 'Generating...' : 'Get Prediction'}
+            </Text>
+          </TouchableOpacity>
 
-          {/* Go to Game Button - Always visible */}
           <TouchableOpacity
             style={[styles.actionButton, { backgroundColor: theme.colors.success }]}
             onPress={goToGame}
@@ -721,35 +723,32 @@ export default function GameScreen({ route, navigation }) {
             <Text style={styles.actionButtonText}>Go to Game</Text>
           </TouchableOpacity>
 
-          {game.title && game.title.toLowerCase() !== 'aviator' && (
-            /* Activate Button — after apply, keep closed and show already-applied state */
-            <TouchableOpacity
-              style={[
-                styles.actionButton,
-                {
-                  backgroundColor: (isActivated || isPending)
-                    ? theme.colors.textSecondary
-                    : theme.colors.primary,
-                },
-              ]}
-              onPress={() => {
-                if (isActivated || isPending) {
-                  showCustomAlert('Info', 'Code already applied', [{ text: 'OK', style: 'default' }]);
-                } else {
-                  setShowActivationModal(true);
-                }
-              }}
-            >
-              <Ionicons
-                name={(isActivated || isPending) ? 'checkmark-circle' : 'key'}
-                size={getFontSize(20)}
-                color="white"
-              />
-              <Text style={styles.actionButtonText}>
-                {(isActivated || isPending) ? 'Code Already Applied' : 'Activate Hack'}
-              </Text>
-            </TouchableOpacity>
-          )}
+          <TouchableOpacity
+            style={[
+              styles.actionButton,
+              {
+                backgroundColor: (isActivated || isPending)
+                  ? theme.colors.textSecondary
+                  : theme.colors.primary,
+              },
+            ]}
+            onPress={() => {
+              if (isActivated || isPending) {
+                showCustomAlert('Info', 'Code already applied', [{ text: 'OK', style: 'default' }]);
+              } else {
+                setShowActivationModal(true);
+              }
+            }}
+          >
+            <Ionicons
+              name={(isActivated || isPending) ? 'checkmark-circle' : 'key'}
+              size={getFontSize(20)}
+              color="white"
+            />
+            <Text style={styles.actionButtonText}>
+              {(isActivated || isPending) ? 'Code Already Applied' : 'Activate Hack'}
+            </Text>
+          </TouchableOpacity>
         </View>
 
 
@@ -908,32 +907,37 @@ const styles = StyleSheet.create({
     marginBottom: getSpacing(20),
   },
   predictionButton: {
-    width: responsiveWidth(45),
-    height: responsiveWidth(45),
-    borderRadius: responsiveWidth(22.5),
+    width: PREDICTION_CIRCLE,
+    height: PREDICTION_CIRCLE,
+    borderRadius: PREDICTION_CIRCLE / 2,
     justifyContent: 'center',
     alignItems: 'center',
   },
   predictionButtonInner: {
-    width: '100%',
-    height: '100%',
+    width: '88%',
+    height: '88%',
+    borderRadius: PREDICTION_CIRCLE / 2,
     justifyContent: 'center',
     alignItems: 'center',
   },
   predictionContent: {
+    width: '100%',
+    paddingHorizontal: getSpacing(8),
     justifyContent: 'center',
     alignItems: 'center',
   },
   predictionValue: {
-    fontSize: getFontSize(52),
+    width: '100%',
+    fontSize: PREDICTION_FONT,
     fontWeight: '900',
     color: '#FFFFFF',
-    marginBottom: 0,
-    marginTop: getSpacing(10),
+    textAlign: 'center',
+    includeFontPadding: false,
   },
   predictionLabel: {
-    fontSize: getFontSize(16),
+    fontSize: getFontSize(13),
     fontWeight: '700',
+    textAlign: 'center',
     textShadowColor: 'rgba(0, 0, 0, 0.5)',
     textShadowOffset: { width: 1, height: 1 },
     textShadowRadius: 2,

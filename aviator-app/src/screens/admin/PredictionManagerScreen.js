@@ -13,6 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { collection, getDocs, query, orderBy, updateDoc, doc, addDoc } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { useTheme } from '../../theme/ThemeContext';
+import { getFontSize, getSpacing, safeAreaTop } from '../../utils/responsive';
 
 // Memoized Game Item Component
 const GameItem = React.memo(({ item, theme, onManage }) => (
@@ -461,36 +462,36 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 60,
-    paddingBottom: 20,
+    paddingHorizontal: getSpacing(16),
+    paddingTop: safeAreaTop + getSpacing(12),
+    paddingBottom: getSpacing(14),
     borderBottomWidth: 1,
   },
   headerTitle: {
-    fontSize: 20,
+    fontSize: getFontSize(18),
     fontWeight: 'bold',
   },
   infoBox: {
-    padding: 16,
-    margin: 16,
-    borderRadius: 12,
+    padding: getSpacing(14),
+    margin: getSpacing(12),
+    borderRadius: getSpacing(12),
     borderWidth: 1,
   },
   infoTitle: {
-    fontSize: 16,
+    fontSize: getFontSize(15),
     fontWeight: '600',
     marginBottom: 8,
   },
   infoText: {
-    fontSize: 14,
-    lineHeight: 20,
+    fontSize: getFontSize(13),
+    lineHeight: getFontSize(19),
   },
   gamesList: {
-    padding: 16,
+    padding: getSpacing(12),
   },
   gameCard: {
-    borderRadius: 16,
-    marginBottom: 16,
+    borderRadius: getSpacing(14),
+    marginBottom: getSpacing(12),
     padding: 16,
     shadowOffset: {
       width: 0,

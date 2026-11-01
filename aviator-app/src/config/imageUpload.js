@@ -10,7 +10,6 @@ export async function uploadGameImage(imageUri) {
   if (!isCloudinaryConfigured()) {
     throw new Error('Cloudinary is not configured');
   }
-  console.log('Uploading to Cloudinary...');
   return uploadToCloudinary(imageUri);
 }
 

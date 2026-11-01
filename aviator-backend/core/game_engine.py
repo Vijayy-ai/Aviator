@@ -75,15 +75,74 @@ def _set_round_status(round_id: int, status: str) -> None:
     GameRound.objects.filter(id=round_id).update(status=status)
 
 
+def broadcast_live_bet(event_type: str, bet: Bet, profile=None) -> None:
+    """Sync-safe WS push for live bet book updates."""
+    try:
+        from asgiref.sync import async_to_sync
+
+        channel_layer = get_channel_layer()
+        if channel_layer is None:
+            return
+        if profile is None:
+            try:
+                profile = bet.user.profile
+            except Exception:
+                profile = None
+        player = "Player"
+        public_uid = ""
+        if profile is not None:
+            raw = (getattr(profile, "username", None) or "Player")[:24]
+            # Never expose a phone-looking username in the public live book.
+            compact = raw.replace(" ", "").replace("-", "")
+            if compact.startswith("+"):
+                compact = compact[1:]
+            if compact.isdigit() and len(compact) >= 8:
+                player = "Player"
+            else:
+                player = raw
+            public_uid = getattr(profile, "public_uid", None) or ""
+        payload = {
+            "type": "live_bet",
+            "event": event_type,
+            "bet": {
+                "id": bet.id,
+                "round_id": bet.round_id,
+                "panel": bet.panel,
+                "player": player,
+                "public_uid": public_uid,
+                "bet_amount": float(bet.bet_amount),
+                "status": bet.status,
+                "cashout_multiplier": float(bet.cashout_multiplier) if bet.cashout_multiplier is not None else None,
+                "payout_amount": float(bet.payout_amount or 0),
+            },
+        }
+        async_to_sync(channel_layer.group_send)(
+            GROUP_NAME,
+            {"type": "game.event", "payload": payload},
+        )
+    except Exception:
+        pass
+
+
 @sync_to_async
 @transaction.atomic
 def _resolve_bets(round_id: int, crash_point: Decimal) -> None:
-    bets = list(Bet.objects.select_for_update().filter(round_id=round_id, status=Bet.Status.PENDING))
+    # of=("self",): Postgres rejects FOR UPDATE on nullable OUTER JOIN side
+    # (user.profile is OneToOne null=True → LEFT JOIN via select_related).
+    bets = list(
+        Bet.objects.select_for_update(of=("self",))
+        .select_related("user__profile")
+        .filter(round_id=round_id, status=Bet.Status.PENDING)
+    )
     for bet in bets:
         # Pending bets at crash are losers (cashouts are settled immediately by API)
         bet.status = Bet.Status.LOST
         bet.payout_amount = Decimal("0.00")
         bet.save(update_fields=["status", "payout_amount"])
+        try:
+            broadcast_live_bet("lost", bet, getattr(bet.user, "profile", None))
+        except Exception:
+            pass
 
 
 async def run_game_engine_forever():
@@ -126,12 +185,12 @@ async def run_game_engine_forever():
         await _set_round_status(game_round.id, GameRound.Status.ACTIVE)
         start = asyncio.get_event_loop().time()
 
-        # Exponential-ish growth matching front-end simulation:
-        # e^(0.0035*t² + 0.012*t)  →  1.09x ≈ 3.5s, 1.50x ≈ 9.2s, 2.0x ≈ 12.5s
+        # Controlled exponential growth (same crash points, smoother late-round pace):
+        # e^(0.00045*t² + 0.055*t) — readable through high multipliers.
         current_multiplier = 1.00
         while Decimal(str(current_multiplier)).quantize(Decimal("0.01")) < crash_point:
             elapsed = asyncio.get_event_loop().time() - start
-            current_multiplier = math.exp(0.0035 * elapsed * elapsed + 0.012 * elapsed)
+            current_multiplier = math.exp(0.00045 * elapsed * elapsed + 0.055 * elapsed)
             current_multiplier = float(min(current_multiplier, float(crash_point)))
 
             set_state(

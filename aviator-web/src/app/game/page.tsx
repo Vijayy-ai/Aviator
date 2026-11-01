@@ -224,7 +224,7 @@ export default function GamePage() {
   const [myBets, setMyBets] = useState<MyBetRecord[]>([]);
   const [historyLimit, setHistoryLimit] = useState(10);
   const [booting, setBooting] = useState(false);
-  const [myUserLabel] = useState<string>("You");
+  const [myUserLabel, setMyUserLabel] = useState<string>("Player");
   const [showPanel2, setShowPanel2] = useState(true);
   const [localAdjust, setLocalAdjust] = useState(0);
 
@@ -352,6 +352,16 @@ export default function GamePage() {
             .then((res) => {
               if (simStartedRef.current) return;
               setWallet(res.profile.fake_wallet_balance);
+              const uname = (res.profile.username || "").trim();
+              if (uname && !/^\+?\d{8,}$/.test(uname)) {
+                setMyUserLabel(uname);
+                setDisplayName(uname);
+                try {
+                  localStorage.setItem(LS_NAME, uname);
+                } catch {
+                  /* ignore */
+                }
+              }
             })
             .catch(() => {
               if (!simStartedRef.current) setWallet(null);
@@ -564,8 +574,52 @@ export default function GamePage() {
 
       ws.onmessage = (evt) => {
         try {
-          const data = JSON.parse(evt.data) as GamePayload;
-          applyPayload(data);
+          const data = JSON.parse(evt.data) as GamePayload & {
+            type?: string;
+            event?: string;
+            bet?: {
+              id: number;
+              round_id: number;
+              panel: number;
+              player: string;
+              bet_amount: number;
+              status: string;
+              cashout_multiplier: number | null;
+              payout_amount: number;
+            };
+          };
+          if (data?.type === "live_bet" && data.bet) {
+            const b = data.bet;
+            const rowId = `live_${b.id}`;
+            const panel = (b.panel === 2 ? 2 : 1) as 1 | 2;
+            setBets((prev) => {
+              const mapped: BetRow = {
+                id: rowId,
+                player: b.player || "Player",
+                betInr: Number(b.bet_amount) || 0,
+                cashoutX: b.cashout_multiplier != null ? Number(b.cashout_multiplier) : null,
+                winInr: Number(b.payout_amount) || 0,
+                status: (b.status === "WON" ? "won" : b.status === "LOST" ? "lost" : "pending") as BetRow["status"],
+                createdAt: Date.now(),
+                panel,
+                roundId: b.round_id,
+                avatar: AVATARS[Math.abs(b.id) % AVATARS.length],
+              };
+              // Drop optimistic local row for same round/panel to avoid duplicates.
+              const withoutLocal = prev.filter(
+                (r) => !(r.roundId === b.round_id && r.panel === panel && String(r.id).startsWith("me_"))
+              );
+              const existing = withoutLocal.findIndex((r) => r.id === rowId);
+              if (existing >= 0) {
+                const copy = withoutLocal.slice();
+                copy[existing] = { ...copy[existing]!, ...mapped };
+                return copy;
+              }
+              return [mapped, ...withoutLocal];
+            });
+            return;
+          }
+          if (data?.status) applyPayload(data as GamePayload);
         } catch {
           // ignore
         }
@@ -654,6 +708,9 @@ export default function GamePage() {
 
     setHistory((prev) => [payload.crash_point, ...prev].slice(0, 40));
     const roundRows = betsRef.current.filter((r) => r.roundId === payload.round_id);
+    const settledRows = roundRows.map((r) =>
+      r.status === "pending" ? { ...r, status: "lost" as const, cashoutX: null, winInr: 0 } : r
+    );
     const pendingMine = roundRows.filter((r) => r.panel && r.status === "pending");
     if (pendingMine.length > 0) {
       const lostAmt = pendingMine.reduce((sum, r) => sum + r.betInr, 0);
@@ -678,7 +735,7 @@ export default function GamePage() {
       setPanel1((p) => (p.placedRoundId === payload.round_id && p.cashedRoundId !== payload.round_id ? { ...p, lockedStake: null, placedRoundId: null } : p));
       setPanel2((p) => (p.placedRoundId === payload.round_id && p.cashedRoundId !== payload.round_id ? { ...p, lockedStake: null, placedRoundId: null } : p));
     }
-    const cashed = roundRows.filter((r) => r.status === "won");
+    const cashed = settledRows.filter((r) => r.status === "won");
     const crowd = crowdCashed(payload.round_id, payload.crash_point);
     setPreviousRound({
       roundId: payload.round_id,
@@ -739,6 +796,7 @@ export default function GamePage() {
     };
     if (n1.placedRoundId === roundId && n1.lockedStake != null) pushUser(1, n1.lockedStake);
     if (n2.placedRoundId === roundId && n2.lockedStake != null) pushUser(2, n2.lockedStake);
+    // Fake crowd bots + real user rows (same as before).
     setBets([...userRows, ...buildRoundBets(roundId)]);
 
     const submitQueued = async (panelIdx: 1 | 2, p: BetPanelState) => {
@@ -775,7 +833,7 @@ export default function GamePage() {
 
   const doPlaceBet = useCallback(async (panelIdx: 1 | 2) => {
     if (!roundId) return;
-    const state = panelIdx === 1 ? panel1 : panel2;
+    const state = panelIdx === 1 ? panel1Ref.current : panel2Ref.current;
     const setP = panelIdx === 1 ? setPanel1 : setPanel2;
     if (state.placing || state.cashing || state.queuedForNext) return;
     const activeFlight = status === "flying" && state.placedRoundId === roundId && state.cashedRoundId !== roundId;
@@ -840,33 +898,53 @@ export default function GamePage() {
       return;
     }
 
+    // Optimistic UI: lock the panel immediately so the button feels instant.
+    setLocalAdjust((a) => Math.round((a - amountN) * 100) / 100);
+    setP((p) => ({
+      ...p,
+      placing: true,
+      placedRoundId: roundId,
+      lockedStake: amountN,
+      cashedRoundId: null,
+      lastActionError: null,
+    }));
+    setBets((prev) => [
+      {
+        id: `me_${panelIdx}_${roundId}`,
+        player: myUserLabel,
+        betInr: amountN,
+        cashoutX: null,
+        winInr: 0,
+        status: "pending",
+        createdAt: Date.now(),
+        panel: panelIdx,
+        roundId,
+        avatar: AVATARS[avatarIdxRef.current % AVATARS.length],
+      },
+      ...prev.filter((r) => !(r.panel === panelIdx && r.roundId === roundId)),
+    ]);
+
     try {
       const res = await placeBet({ round_id: roundId, bet_amount: amountN.toFixed(2), slot: panelIdx });
       setWallet(res.profile.fake_wallet_balance);
+      setLocalAdjust(0);
       setP((p) => ({ ...p, placing: false, placedRoundId: roundId, lockedStake: amountN, cashedRoundId: null }));
-      setBets((prev) => [
-        {
-          id: `me_${panelIdx}_${roundId}`,
-          player: myUserLabel,
-          betInr: amountN,
-          cashoutX: null,
-          winInr: 0,
-          status: "pending",
-          createdAt: Date.now(),
-          panel: panelIdx,
-          roundId,
-          avatar: AVATARS[avatarIdxRef.current % AVATARS.length],
-        },
-        ...prev.filter((r) => !(r.panel === panelIdx && r.roundId === roundId)),
-      ]);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Bet failed";
-      setP((p) => ({ ...p, placing: false, lastActionError: msg }));
+      setLocalAdjust((a) => Math.round((a + amountN) * 100) / 100);
+      setBets((prev) => prev.filter((r) => !(r.id === `me_${panelIdx}_${roundId}`)));
+      setP((p) => ({
+        ...p,
+        placing: false,
+        placedRoundId: p.placedRoundId === roundId ? null : p.placedRoundId,
+        lockedStake: null,
+        lastActionError: msg,
+      }));
     }
-  }, [localAdjust, myUserLabel, panel1, panel2, roundId, simulationActive, status, wallet]);
+  }, [localAdjust, myUserLabel, roundId, simulationActive, status, wallet]);
 
   const doCancel = useCallback(async (panelIdx: 1 | 2) => {
-    const state = panelIdx === 1 ? panel1 : panel2;
+    const state = panelIdx === 1 ? panel1Ref.current : panel2Ref.current;
     const setP = panelIdx === 1 ? setPanel1 : setPanel2;
     const stake = state.lockedStake ?? 0;
 
@@ -910,11 +988,11 @@ export default function GamePage() {
       const msg = e instanceof Error ? e.message : "Cancel failed";
       setP((p) => ({ ...p, placing: false, lastActionError: msg }));
     }
-  }, [panel1, panel2, roundId, simulationActive, status]);
+  }, [roundId, simulationActive, status]);
 
   const doCashout = useCallback(async (panelIdx: 1 | 2) => {
     if (!roundId || status !== "flying") return;
-    const state = panelIdx === 1 ? panel1 : panel2;
+    const state = panelIdx === 1 ? panel1Ref.current : panel2Ref.current;
     const setP = panelIdx === 1 ? setPanel1 : setPanel2;
     if (state.cashing || state.cashedRoundId === roundId) return;
     if (state.placedRoundId !== roundId) {
@@ -922,33 +1000,15 @@ export default function GamePage() {
       return;
     }
 
-    const x = multiplierRef.current;
+    // Lock panel immediately so one tap is enough; settle only with server-confirmed X.
     const stake = state.lockedStake ?? parsePositiveNumber(state.amount);
-    const lockedX = Math.round(x * 100) / 100;
-    const payout = Math.round((Number.isFinite(stake) ? stake : 0) * lockedX * 100) / 100;
 
     setP((p) => ({ ...p, cashing: true, cashedRoundId: roundId, lastActionError: null }));
-    setBets((prev) => {
-      const idx = prev.findIndex((r) => r.panel === panelIdx && r.roundId === roundId && r.status === "pending");
-      if (idx < 0) return prev;
-      const copy = prev.slice();
-      copy[idx] = { ...copy[idx]!, status: "won", cashoutX: lockedX, winInr: payout };
-      return copy;
-    });
-    setWinOverlay({ show: true, amount: payout, multiplier: lockedX });
-    rememberBet({
-      id: `win_${panelIdx}_${roundId}_${Date.now()}`,
-      roundId,
-      panel: panelIdx,
-      stake: Number.isFinite(stake) ? stake : 0,
-      cashoutX: lockedX,
-      winInr: payout,
-      status: "won",
-      at: Date.now(),
-    });
     if (soundEnabledRef.current) playTone(660, 0.08);
 
     if (simulationActive) {
+      const x = Math.round(multiplierRef.current * 100) / 100;
+      const payout = Math.round((Number.isFinite(stake) ? stake : 0) * x * 100) / 100;
       const dedupeKey = `${roundId}_${panelIdx}`;
       if (!simCashoutKeysRef.current.has(dedupeKey)) {
         simCashoutKeysRef.current.add(dedupeKey);
@@ -957,66 +1017,91 @@ export default function GamePage() {
           return (Math.round((bal + payout) * 100) / 100).toFixed(2);
         });
       }
+      setWinOverlay({ show: true, amount: payout, multiplier: x });
+      setBets((prev) => {
+        const idx = prev.findIndex((r) => r.panel === panelIdx && r.roundId === roundId && r.status === "pending");
+        if (idx < 0) return prev;
+        const copy = prev.slice();
+        copy[idx] = { ...copy[idx]!, status: "won", cashoutX: x, winInr: payout };
+        return copy;
+      });
       setP((p) => ({ ...p, cashing: false }));
       return;
     }
 
-    try {
-      const res = await cashout({ round_id: roundId, slot: panelIdx });
-      setWallet(res.profile.fake_wallet_balance);
-      const serverX = Number(res.bet.cashout_multiplier ?? lockedX);
-      const serverWin = Number(res.bet.payout_amount ?? payout);
-      setWinOverlay({ show: true, amount: serverWin, multiplier: serverX });
-      setBets((prev) => {
-        const idx = prev.findIndex((r) => r.panel === panelIdx && r.roundId === roundId);
-        if (idx < 0) return prev;
-        const copy = prev.slice();
-        copy[idx] = {
-          ...copy[idx]!,
+    // Fire request immediately — do not wait for UI animations.
+    void (async () => {
+      try {
+        const res = await cashout({ round_id: roundId, slot: panelIdx });
+        setWallet(res.profile.fake_wallet_balance);
+        const serverX = Number(res.bet.cashout_multiplier);
+        const serverWin = Number(res.bet.payout_amount);
+        if (!Number.isFinite(serverX) || serverX <= 0) {
+          throw new Error("Invalid cashout response");
+        }
+        const settledX = Math.round(serverX * 100) / 100;
+        const settledWin = Number.isFinite(serverWin)
+          ? Math.round(serverWin * 100) / 100
+          : Math.round((Number.isFinite(stake) ? stake : 0) * settledX * 100) / 100;
+        setWinOverlay({ show: true, amount: settledWin, multiplier: settledX });
+        setBets((prev) => {
+          const idx = prev.findIndex((r) => r.panel === panelIdx && r.roundId === roundId);
+          if (idx < 0) return prev;
+          const copy = prev.slice();
+          copy[idx] = { ...copy[idx]!, status: "won", cashoutX: settledX, winInr: settledWin };
+          return copy;
+        });
+        rememberBet({
+          id: `win_${panelIdx}_${roundId}_${Date.now()}`,
+          roundId,
+          panel: panelIdx,
+          stake: Number.isFinite(stake) ? stake : 0,
+          cashoutX: settledX,
+          winInr: settledWin,
           status: "won",
-          cashoutX: Math.round(serverX * 100) / 100,
-          winInr: Math.round(serverWin * 100) / 100,
-        };
-        return copy;
-      });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Cashout failed";
-      setP((p) => ({ ...p, cashedRoundId: null, lastActionError: msg }));
-      setBets((prev) => {
-        const idx = prev.findIndex((r) => r.panel === panelIdx && r.roundId === roundId);
-        if (idx < 0) return prev;
-        const copy = prev.slice();
-        copy[idx] = { ...copy[idx]!, status: "pending", cashoutX: null, winInr: 0 };
-        return copy;
-      });
-    } finally {
-      setP((p) => ({ ...p, cashing: false }));
-    }
-  }, [panel1, panel2, rememberBet, roundId, simulationActive, status]);
+          at: Date.now(),
+        });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Cashout failed";
+        setP((p) => ({ ...p, cashedRoundId: null, lastActionError: msg }));
+        setWinOverlay({ show: false, amount: 0, multiplier: 0 });
+        setBets((prev) => {
+          const idx = prev.findIndex((r) => r.panel === panelIdx && r.roundId === roundId);
+          if (idx < 0) return prev;
+          const copy = prev.slice();
+          copy[idx] = { ...copy[idx]!, status: "pending", cashoutX: null, winInr: 0 };
+          return copy;
+        });
+      } finally {
+        setP((p) => ({ ...p, cashing: false }));
+      }
+    })();
+  }, [rememberBet, roundId, simulationActive, status]);
 
   const maybeAutoBet = useCallback(
     async (panelIdx: 1 | 2) => {
-      const p = panelIdx === 1 ? panel1 : panel2;
+      const p = panelIdx === 1 ? panel1Ref.current : panel2Ref.current;
       if (p.mode !== "auto" || !p.autoBetEnabled) return;
       if (!roundId) return;
-      if (p.placedRoundId === roundId || p.queuedForNext) return;
+      if (p.placedRoundId === roundId || p.queuedForNext || p.placing) return;
       await doPlaceBet(panelIdx);
     },
-    [doPlaceBet, panel1, panel2, roundId]
+    [doPlaceBet, roundId]
   );
 
   const maybeAutoCashout = useCallback(
     async (panelIdx: 1 | 2, currentX: number) => {
-      const p = panelIdx === 1 ? panel1 : panel2;
+      // Read latest panel from refs so a threshold cross is not missed on a stale render.
+      const p = panelIdx === 1 ? panel1Ref.current : panel2Ref.current;
       if (p.mode !== "auto" || !p.autoCashoutEnabled) return;
       if (!roundId) return;
-      if (p.cashedRoundId === roundId) return;
+      if (p.cashedRoundId === roundId || p.cashing) return;
       if (p.placedRoundId !== roundId) return;
       const target = parsePositiveNumber(p.autoCashoutAt);
       if (!Number.isFinite(target) || target <= 1) return;
-      if (currentX >= target) await doCashout(panelIdx);
+      if (currentX + 1e-9 >= target) await doCashout(panelIdx);
     },
-    [doCashout, panel1, panel2, roundId]
+    [doCashout, roundId]
   );
 
   useEffect(() => {
@@ -1040,7 +1125,7 @@ export default function GamePage() {
     setBets((prev) => settleBotsAtMultiplier(prev, payload.round_id, payload.current_multiplier));
   }, [maybeAutoCashout, payload, roundId]);
 
-  const visibleHistoryPills = useMemo(() => history.slice(0, 16), [history]);
+  const visibleHistoryPills = useMemo(() => history.slice(0, 24), [history]);
   const waitingSeconds = 6.0;
   const waitingPct = useMemo(() => {
     if (waitingLeft == null) return 0;
@@ -1069,11 +1154,23 @@ export default function GamePage() {
     () => crowdCashed(roundId, status === "flying" || status === "crashed" ? multiplier : 1),
     [multiplier, roundId, status],
   );
+  const liveBetStats = useMemo(() => {
+    const total = liveCrowd.total;
+    const cashed = liveCrowd.cashed;
+    return {
+      totalBets: total,
+      shownBets: Math.min(total, Math.max(cashed, roundBook.length)),
+      totalWin: liveCrowd.amount,
+      cashed,
+      progress: total > 0 ? clamp((cashed / total) * 100, 0, 100) : 0,
+    };
+  }, [liveCrowd, roundBook.length]);
 
   const persistName = useCallback((name: string) => {
     const t = name.trim();
     if (!t) return;
     setDisplayName(t);
+    setMyUserLabel(t);
     try {
       localStorage.setItem(LS_NAME, t);
     } catch {
@@ -1153,13 +1250,13 @@ export default function GamePage() {
 
             <div className="px-3 pb-1.5">
               <div className="flex items-center gap-1 overflow-hidden">
-                <div className="no-scrollbar flex h-7 min-w-0 flex-1 items-center overflow-x-auto rounded-full bg-[#141518] px-1">
+                <div className="no-scrollbar flex h-7 min-w-0 flex-1 items-center gap-x-2.5 overflow-x-auto rounded-full bg-[#141518] px-2">
                   {visibleHistoryPills.map((x, i) => {
-                    const hot = x < 2 ? "text-[#6ec1ff]" : x < 10 ? "text-[#c9a6ff]" : "text-[#ff5d7a]";
+                    const hot = x < 2 ? "text-[#34b4ff]" : x < 10 ? "text-[#913ef8]" : "text-[#c017b4]";
                     return (
                       <span
                         key={`${i}_${x}`}
-                        className={["shrink-0 px-1.5 text-[13px] font-bold leading-none tabular-nums", hot].join(" ")}
+                        className={["shrink-0 text-[12px] font-bold leading-none tabular-nums", hot].join(" ")}
                       >
                         {formatX(x)}
                       </span>
@@ -1172,7 +1269,7 @@ export default function GamePage() {
                 <button
                   type="button"
                   onClick={() => setHistoryOpen(true)}
-                  className="flex h-7 w-8 shrink-0 items-center justify-center rounded-lg bg-[#16171c] ring-1 ring-white/10"
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#16171c] ring-1 ring-white/10"
                   aria-label="Round history"
                 >
                   <span className="text-[13px] leading-none text-white/70">⋯</span>
@@ -1208,39 +1305,51 @@ export default function GamePage() {
                   />
                   <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_72%_35%,rgba(155,105,235,0.18),transparent_55%)]" />
                   <div className="absolute inset-0 bg-linear-to-t from-black/45 via-transparent to-black/20" />
+                  {/* Same flight plane stays mounted in waiting so takeoff is seamless */}
                   {animationEnabled ? (
                     <div className="absolute inset-0 z-[1] opacity-95">
-                      <AviatorCurve phase={waiting ? "waiting" : flying ? "flying" : "crashed"} multiplier={multiplier} />
+                      <AviatorCurve
+                        phase={waiting ? "waiting" : flying ? "flying" : "crashed"}
+                        multiplier={multiplier}
+                      />
                     </div>
                   ) : null}
 
-                  <div className="pointer-events-none absolute inset-0 z-[5] flex items-center justify-center">
-                    <div className="text-center">
-                      {crashed ? (
-                        <div className="mb-1 text-[15px] font-black tracking-tight text-white/90">FLEW AWAY!</div>
-                      ) : null}
-                      <div
-                        id="aviator-live-multiplier"
-                        className={[
-                          "relative text-[52px] font-black leading-none tracking-tight sm:text-[60px]",
-                          "drop-shadow-[0_2px_0_rgba(0,0,0,0.9)] drop-shadow-[0_4px_28px_rgba(0,0,0,0.75)]",
-                          crashed ? "text-[#ff3b5c]" : "text-white",
-                        ].join(" ")}
-                      >
-                        {formatX(waiting ? 1 : multiplier)}
-                      </div>
-                      {waiting && waitingLeft != null ? (
-                        <div className="mt-2 text-[15px] font-black tabular-nums text-white/90">
-                          Next round in {waitingLeft.toFixed(1)}s
+                  {waiting ? (
+                    <WaitingInterstitial
+                      waitingPct={waitingPct}
+                      playersLabel={livePlayersLabel}
+                      betAccepted={
+                        roundId != null &&
+                        ((panel1.placedRoundId === roundId && !panel1.cashedRoundId) ||
+                          (panel2.placedRoundId === roundId && !panel2.cashedRoundId))
+                      }
+                    />
+                  ) : (
+                    <div className="pointer-events-none absolute inset-0 z-[5] flex items-center justify-center">
+                      <div className="text-center">
+                        {crashed ? (
+                          <div className="mb-1 text-[15px] font-black tracking-tight text-white/90">FLEW AWAY!</div>
+                        ) : null}
+                        <div
+                          id="aviator-live-multiplier"
+                          className={[
+                            "relative text-[52px] font-black leading-none tracking-tight tabular-nums sm:text-[60px]",
+                            "drop-shadow-[0_2px_0_rgba(0,0,0,0.9)] drop-shadow-[0_4px_28px_rgba(0,0,0,0.75)]",
+                            crashed ? "text-[#ff3b5c]" : "text-white",
+                          ].join(" ")}
+                        >
+                          {/* RAF owns this text while flying — React children cause 10Hz stutter */}
+                          {crashed ? formatX(multiplier) : "1.00x"}
                         </div>
-                      ) : null}
+                      </div>
                     </div>
-                  </div>
+                  )}
 
-                  {animationEnabled ? (
+                  {!waiting ? (
                     <div className="pointer-events-none absolute right-2 bottom-2 z-[3] flex items-center rounded-full bg-black/50 px-1.5 py-1 ring-1 ring-white/10 backdrop-blur-[2px]">
                       <div className="flex -space-x-1.5 pr-1.5">
-                        {AVATARS.slice(0, 4).map((src) => (
+                        {AVATARS.slice(0, 3).map((src) => (
                           <span
                             key={src}
                             className="h-4 w-4 rounded-full bg-cover bg-center ring-1 ring-black/55"
@@ -1249,26 +1358,6 @@ export default function GamePage() {
                         ))}
                       </div>
                       <span className="text-[9px] font-bold tabular-nums text-white/85">{livePlayersLabel}</span>
-                    </div>
-                  ) : null}
-
-                  {waiting && waitingLeft != null ? (
-                    <div className="absolute top-3 right-3 left-3 z-[3]">
-                      <div className="flex items-center justify-between text-[11px] font-semibold text-white/72">
-                        <span>Starting in</span>
-                        <span className="tabular-nums">{waitingLeft.toFixed(1)}s</span>
-                      </div>
-                      <div className="mt-2 h-[5px] w-full rounded-full bg-white/10">
-                        <div className="h-[5px] rounded-full bg-[#28a909] transition-[width] duration-300 ease-out" style={{ width: `${waitingPct}%` }} />
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {waiting && roundId != null && ((panel1.placedRoundId === roundId && !panel1.cashedRoundId) || (panel2.placedRoundId === roundId && !panel2.cashedRoundId)) ? (
-                    <div className="absolute inset-0 z-[4] flex items-center justify-center pointer-events-none mt-10">
-                      <div className="bg-[#28a909]/20 text-[#39ef65] border border-[#28a909]/40 px-4 py-1.5 rounded-full text-xs font-bold tracking-wide shadow-[0_0_15px_rgba(40,169,9,0.3)] backdrop-blur-sm animate-pulse">
-                        BET ACCEPTED
-                      </div>
                     </div>
                   ) : null}
 
@@ -1327,38 +1416,66 @@ export default function GamePage() {
 
             <div className="mt-3 px-3">
               <div className="rounded-[22px] bg-[#12121a] ring-1 ring-white/10">
-                <div className="flex items-start gap-2 px-3 pt-3">
-                  <div className="flex shrink-0 items-center gap-1.5">
-                    <button type="button" onClick={() => setBetsTab("all")} className={["rounded-full px-3 py-1.5 text-xs font-bold ring-1 ring-white/10", betsTab === "all" ? "bg-white/10 text-white" : "bg-white/5 text-white/65"].join(" ")}>
-                      All Bets
-                    </button>
-                    <button type="button" onClick={() => setBetsTab("previous")} className={["rounded-full px-3 py-1.5 text-xs font-bold ring-1 ring-white/10", betsTab === "previous" ? "bg-white/10 text-white" : "bg-white/5 text-white/65"].join(" ")}>
-                      Previous
-                    </button>
-                    <button type="button" onClick={() => setBetsTab("top")} className={["rounded-full px-3 py-1.5 text-xs font-bold ring-1 ring-white/10", betsTab === "top" ? "bg-white/10 text-white" : "bg-white/5 text-white/65"].join(" ")}>
-                      Top
-                    </button>
-                  </div>
+                <div className="flex items-center gap-1.5 px-3 pt-3">
+                  <button type="button" onClick={() => setBetsTab("all")} className={["rounded-full px-3 py-1.5 text-xs font-bold ring-1 ring-white/10", betsTab === "all" ? "bg-white/10 text-white" : "bg-white/5 text-white/65"].join(" ")}>
+                    All Bets
+                  </button>
+                  <button type="button" onClick={() => setBetsTab("previous")} className={["rounded-full px-3 py-1.5 text-xs font-bold ring-1 ring-white/10", betsTab === "previous" ? "bg-white/10 text-white" : "bg-white/5 text-white/65"].join(" ")}>
+                    Previous
+                  </button>
+                  <button type="button" onClick={() => setBetsTab("top")} className={["rounded-full px-3 py-1.5 text-xs font-bold ring-1 ring-white/10", betsTab === "top" ? "bg-white/10 text-white" : "bg-white/5 text-white/65"].join(" ")}>
+                    Top
+                  </button>
+                </div>
 
-                  <div className="min-w-0 flex-1 pt-0.5 text-right text-[11px] leading-tight">
-                    {betsTab === "previous" && previousRound ? (
-                      <>
-                        <div className="font-black text-[#ff5d7a]">Crashed at {formatX(previousRound.crashPoint)}</div>
-                        <div className="mt-0.5 font-semibold text-white/75">
-                          {previousRound.cashedCount.toLocaleString("en-IN")} out of {previousRound.totalPlayers.toLocaleString("en-IN")} players cashed out
+                <div className="mx-3 mt-3 rounded-2xl bg-[#0c0d12] px-3 py-2.5 ring-1 ring-white/8">
+                  {betsTab === "previous" && previousRound ? (
+                    <div className="text-[11px] leading-tight">
+                      <div className="font-black text-[#ff5d7a]">Crashed at {formatX(previousRound.crashPoint)}</div>
+                      <div className="mt-0.5 font-semibold text-white/75">
+                        {previousRound.cashedCount.toLocaleString("en-IN")} / {previousRound.totalPlayers.toLocaleString("en-IN")} cashed out
+                      </div>
+                      <div className="mt-1 text-right text-sm font-black tabular-nums text-white">
+                        {fmtINR(previousRound.cashedAmount)}
+                      </div>
+                      <div className="text-right text-[10px] font-semibold text-white/45">Total win INR</div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex -space-x-1.5">
+                          {AVATARS.slice(0, 3).map((src) => (
+                            <span
+                              key={src}
+                              className="h-6 w-6 rounded-full bg-cover bg-center ring-1 ring-[#28a909]/70"
+                              style={{ backgroundImage: `url("${src}")` }}
+                            />
+                          ))}
                         </div>
-                      </>
-                    ) : (
-                      <>
-                        <div className="font-semibold text-white/90">
-                          {liveCrowd.cashed.toLocaleString("en-IN")} out of {liveCrowd.total.toLocaleString("en-IN")} players cashed out
+                        <div className="mt-1.5 text-[12px] font-bold tabular-nums text-white">
+                          <span className="text-white">{liveBetStats.shownBets.toLocaleString("en-IN")}</span>
+                          <span className="text-white/45">/{liveBetStats.totalBets.toLocaleString("en-IN")} Bets</span>
                         </div>
-                        <div className="mt-0.5 font-semibold tabular-nums text-[#39ef65]">
-                          {fmtINR(liveCrowd.amount)} INR
+                      </div>
+                      <div className="min-w-0 text-right">
+                        <div className="text-[18px] font-black tabular-nums leading-none text-white">
+                          {fmtINR(liveBetStats.totalWin)}
                         </div>
-                      </>
-                    )}
-                  </div>
+                        <div className="mt-0.5 text-[10px] font-semibold text-white/45">Total win INR</div>
+                        <div className="mt-1 text-[11px] font-semibold text-white/70">
+                          {liveCrowd.cashed.toLocaleString("en-IN")} / {liveCrowd.total.toLocaleString("en-IN")} cashed out
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {betsTab !== "previous" ? (
+                    <div className="mt-2 h-[4px] w-full overflow-hidden rounded-full bg-white/10">
+                      <div
+                        className="h-full rounded-full bg-[#28a909] transition-[width] duration-300 ease-out"
+                        style={{ width: `${liveBetStats.progress}%` }}
+                      />
+                    </div>
+                  ) : null}
                 </div>
 
                 <div className="mt-3 border-t border-white/10 px-3 py-2 text-[11px] font-semibold text-white/55">
@@ -1373,6 +1490,11 @@ export default function GamePage() {
                 <div className="no-scrollbar max-h-[420px] overflow-y-auto pb-2 pt-2">
                   {betsTab === "previous" && !previousRound ? (
                     <div className="px-4 py-6 text-center text-xs font-semibold text-white/45">No completed round yet</div>
+                  ) : null}
+                  {filteredBets.length === 0 && !(betsTab === "previous" && !previousRound) ? (
+                    <div className="px-4 py-6 text-center text-xs font-semibold text-white/45">
+                      No bets in this round yet
+                    </div>
                   ) : null}
                   {filteredBets.slice(0, 80).map((r) => {
                     const highlight = r.status === "won";
@@ -1572,41 +1694,41 @@ export default function GamePage() {
 
           {historyOpen ? (
             <div
-              className="absolute inset-0 z-30 flex items-start justify-center bg-black/55 px-4 pt-14 backdrop-blur-sm"
+              className="absolute inset-0 z-30 flex items-start justify-center bg-black/50 px-3 pt-12"
               onClick={() => setHistoryOpen(false)}
               role="presentation"
             >
               <div
-                className="w-full max-w-[410px] rounded-[26px] bg-[#12121a] p-4 ring-1 ring-white/12 shadow-xl"
+                className="w-full max-w-[410px] rounded-2xl bg-[#1b1c22] px-3.5 pb-4 pt-3 shadow-xl ring-1 ring-white/10"
                 onClick={(e) => e.stopPropagation()}
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="round-history-title"
               >
                 <div className="flex items-center justify-between gap-3">
-                  <div id="round-history-title" className="text-sm font-extrabold text-white/90">
+                  <div id="round-history-title" className="text-[15px] font-semibold text-white/70">
                     Round History
                   </div>
                   <button
                     type="button"
-                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-white/10 text-lg font-bold leading-none text-white/85 ring-1 ring-white/15 active:scale-[0.98]"
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/10 text-white/80 active:scale-[0.98]"
                     onClick={() => setHistoryOpen(false)}
                     aria-label="Close round history"
                   >
                     <CloseIcon />
                   </button>
                 </div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {history.slice(0, 30).map((x, i) => {
-                    const hot = x < 2 ? "text-sky-300" : x < 10 ? "text-violet-300" : "text-rose-300";
+                <div className="mt-3 grid grid-cols-4 gap-x-2 gap-y-2 min-[360px]:grid-cols-6 sm:grid-cols-8">
+                  {history.slice(0, 40).map((x, i) => {
+                    const hot = x < 2 ? "text-[#34b4ff]" : x < 10 ? "text-[#913ef8]" : "text-[#c017b4]";
                     return (
-                      <span key={`${i}_${x}`} className={["rounded-full bg-white/5 px-3 py-1.5 text-xs font-bold tabular-nums ring-1 ring-white/10", hot].join(" ")}>
+                      <span key={`${i}_${x}`} className={["text-[12px] font-bold tabular-nums leading-none", hot].join(" ")}>
                         {formatX(x)}
                       </span>
                     );
                   })}
-                  {history.length === 0 ? <div className="text-xs font-semibold text-white/55">Waiting for data…</div> : null}
                 </div>
+                {history.length === 0 ? <div className="mt-3 text-xs font-semibold text-white/55">Waiting for data…</div> : null}
               </div>
             </div>
           ) : null}
@@ -1631,8 +1753,8 @@ const PLANE_TAIL_Y = 0.68;
 const PLANE_SIZE = 95;
 
 /* Same formula as aviator-simulation.ts */
-const MULT_A = 0.0035;
-const MULT_B = 0.012;
+const MULT_A = 0.00045;
+const MULT_B = 0.055;
 function multAtTime(t: number) { return Math.exp(MULT_A * t * t + MULT_B * t); }
 function timeForMult(m: number) {
   if (m <= 1) return 0;
@@ -1650,7 +1772,7 @@ function smoothPathD(pts: { x: number; y: number }[]): string {
     const p1 = pts[i];
     const p2 = pts[i + 1];
     const p3 = pts[Math.min(pts.length - 1, i + 2)];
-    const t = 0.3;
+    const t = 0.18;
     d += ` C${(p1.x + (p2.x - p0.x) * t).toFixed(1)} ${(p1.y + (p2.y - p0.y) * t).toFixed(1)},${(p2.x - (p3.x - p1.x) * t).toFixed(1)} ${(p2.y - (p3.y - p1.y) * t).toFixed(1)},${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
   }
   return d;
@@ -1665,6 +1787,8 @@ function AviatorCurve({ phase, multiplier }: { phase: "waiting" | "flying" | "cr
   const multRef = useRef(multiplier);
   const animMultRef = useRef(1.0);
   const flyAwayRef = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null);
+  const lastShownTextRef = useRef("1.00x");
+  const lastShownAtRef = useRef(0);
   phaseRef.current = phase;
   multRef.current = multiplier;
 
@@ -1698,22 +1822,18 @@ function AviatorCurve({ phase, multiplier }: { phase: "waiting" | "flying" | "cr
       const targetMult = curPhase === "flying" ? multRef.current : 1.0;
 
       if (curPhase === "flying") {
-        if (animMultRef.current > targetMult + 0.2 && targetMult < 1.25) {
+        if (animMultRef.current > targetMult + 0.35 && targetMult < 1.25) {
           animMultRef.current = 1;
         }
-        // Calculate the current flight time based on the active multiplier
-        let currentT = timeForMult(animMultRef.current);
-        currentT += dt; // Continually advance time for perfectly smooth 60fps motion
-
-        const targetT = timeForMult(targetMult);
-
-        // Smoothly correct any drift between our local extrapolated time and the true backend time
+        // Smooth local flight clock (60fps). Soft-sync to WS so it never freezes on 100ms ticks.
+        let currentT = timeForMult(animMultRef.current) + dt;
+        const targetT = timeForMult(Math.max(targetMult, 1));
         if (currentT < targetT) {
-          currentT += (targetT - currentT) * 0.1;
-        } else if (currentT > targetT + 0.5) {
-          currentT = targetT + 0.5;
+          currentT += (targetT - currentT) * 0.18;
+        } else if (currentT > targetT + 0.28) {
+          // Cap lead so cashout UI stays near the real WS value without stepping.
+          currentT = targetT + 0.28;
         }
-
         animMultRef.current = multAtTime(currentT);
         flyAwayRef.current = null;
       } else if (curPhase === "crashed") {
@@ -1727,23 +1847,60 @@ function AviatorCurve({ phase, multiplier }: { phase: "waiting" | "flying" | "cr
       const m = animMultRef.current;
       const isFlying = curPhase === "flying";
       const isCrashed = curPhase === "crashed";
+      const startX = CURVE_PAD_LEFT + 4;
+      const startY = baseY - 2;
 
-      // Directly update the big text multiplier element in the DOM at 60fps
+      // Plane/curve stay 60fps. At high X, refresh the number a bit less often so
+      // each update jumps more (left digits move too) — avoids last-digit film-strip blur.
+      // Still always formats as xx.xx (no fake 0.1 / 0.5 stepping).
       const liveTextEl = document.getElementById("aviator-live-multiplier");
       if (liveTextEl) {
         if (curPhase === "waiting") {
+          lastShownTextRef.current = "1.00x";
           liveTextEl.textContent = "1.00x";
-        } else if (isFlying) {
-          liveTextEl.textContent = `${m.toFixed(2)}x`;
         } else if (curPhase === "crashed") {
-          liveTextEl.textContent = `${multRef.current.toFixed(2)}x`;
+          const crashText = `${Number(multRef.current).toFixed(2)}x`;
+          lastShownTextRef.current = crashText;
+          liveTextEl.textContent = crashText;
+        } else if (isFlying) {
+          const nextText = `${m.toFixed(2)}x`;
+          let gap = 0;
+          if (m >= 40) gap = 70;
+          else if (m >= 20) gap = 55;
+          else if (m >= 10) gap = 40;
+          else if (m >= 5) gap = 24;
+          if (nextText !== lastShownTextRef.current && now - lastShownAtRef.current >= gap) {
+            lastShownTextRef.current = nextText;
+            lastShownAtRef.current = now;
+            liveTextEl.textContent = nextText;
+          }
         }
       }
 
-      if (m <= 1.002 || (!isFlying && !isCrashed)) {
+      // Waiting: park the SAME flight plane at takeoff origin (no separate decorative sprite).
+      if (curPhase === "waiting") {
+        strokeRef.current?.setAttribute("d", "");
+        fillRef.current?.setAttribute("d", "");
+        planeRef.current?.setAttribute("opacity", "1");
+        planeRef.current?.setAttribute("transform", `translate(${startX.toFixed(1)} ${startY.toFixed(1)}) rotate(0)`);
+        raf = requestAnimationFrame(tick);
+        return;
+      }
+
+      if (!isFlying && !isCrashed) {
         strokeRef.current?.setAttribute("d", "");
         fillRef.current?.setAttribute("d", "");
         planeRef.current?.setAttribute("opacity", "0");
+        raf = requestAnimationFrame(tick);
+        return;
+      }
+
+      // Very start of flight: keep plane visible at origin before curve grows.
+      if (isFlying && m <= 1.002) {
+        strokeRef.current?.setAttribute("d", "");
+        fillRef.current?.setAttribute("d", "");
+        planeRef.current?.setAttribute("opacity", "1");
+        planeRef.current?.setAttribute("transform", `translate(${startX.toFixed(1)} ${startY.toFixed(1)}) rotate(0)`);
         raf = requestAnimationFrame(tick);
         return;
       }
@@ -1756,23 +1913,18 @@ function AviatorCurve({ phase, multiplier }: { phase: "waiting" | "flying" | "cr
       const steps = 50;
       const pts: { x: number; y: number }[] = [];
 
-      // Only apply the bobbing animation when the plane reaches the top (t >= FIX_WINDOW_X_MAX)
-      // We use a smooth ramp-up to prevent sudden jumps
+      // Curve path stays stable; light bob applies only to the plane tip (not the whole trail).
       const bobIntensity = Math.max(0, Math.min(1, (t - (FIX_WINDOW_X_MAX - 1.5)) / 1.5));
-      const bobY = isFlying ? Math.sin(now / 400) * 4 * bobIntensity : 0;
-      const bobX = isFlying ? Math.cos(now / 500) * 2.5 * bobIntensity : 0;
+      const bobY = isFlying ? Math.sin(now / 520) * 2.2 * bobIntensity : 0;
+      const bobX = isFlying ? Math.cos(now / 640) * 1.4 * bobIntensity : 0;
 
       for (let i = 0; i <= steps; i++) {
         const frac = i / steps;
         const pointT = frac * t;
-
         const xFrac = pointT / viewXMax;
-
-        // Use a power curve so it rises diagonally through the center numbers
         const yFrac = Math.pow(xFrac, 1.6);
-
-        const x = CURVE_PAD_LEFT + xFrac * usableW + bobX * xFrac;
-        const y = baseY - yFrac * usableH + bobY * xFrac;
+        const x = CURVE_PAD_LEFT + xFrac * usableW;
+        const y = baseY - yFrac * usableH;
         pts.push({ x, y });
       }
 
@@ -1799,8 +1951,8 @@ function AviatorCurve({ phase, multiplier }: { phase: "waiting" | "flying" | "cr
         flyAwayRef.current = { x: tip.x, y: tip.y, vx: (dx / len) * speed, vy: (dy / len) * speed };
       }
 
-      let planeX = tip.x;
-      let planeY = tip.y;
+      let planeX = tip.x + bobX;
+      let planeY = tip.y + bobY;
       if (!isFlying && flyAwayRef.current) {
         const fly = flyAwayRef.current;
         fly.x += fly.vx * dt;
@@ -1846,15 +1998,15 @@ function AviatorCurve({ phase, multiplier }: { phase: "waiting" | "flying" | "cr
           </linearGradient>
           {/* True vertical fill gradient starting from top to bottom */}
           <linearGradient id="curveFillGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stopColor="rgba(223, 21, 57, 0.55)" />
-            <stop offset="1" stopColor="rgba(223, 21, 57, 0.45)" />
+            <stop offset="0" stopColor="rgba(223, 21, 57, 0.28)" />
+            <stop offset="1" stopColor="rgba(223, 21, 57, 0.05)" />
           </linearGradient>
         </defs>
         <g>
-          {/* Area beneath the curve */}
-          <path ref={fillRef} d="" fill="url(#curveFillGrad)" />
+          {/* Soft fill under the single flight path (no stroke on fill = no second line) */}
+          <path ref={fillRef} d="" fill="url(#curveFillGrad)" stroke="none" />
 
-          {/* Curve line */}
+          {/* One continuous flight-path curve */}
           <path
             ref={strokeRef}
             d=""
@@ -1973,6 +2125,70 @@ function SpribeSplash() {
         <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-[#ff2d2d]" />
         <span className="h-2 w-2 animate-pulse rounded-full bg-[#ff2d2d]/80 [animation-delay:150ms]" />
         <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#ff2d2d]/60 [animation-delay:300ms]" />
+      </div>
+    </div>
+  );
+}
+
+function WaitingInterstitial({
+  waitingPct,
+  playersLabel,
+  betAccepted,
+}: {
+  waitingPct: number;
+  playersLabel: string;
+  betAccepted: boolean;
+}) {
+  return (
+    <div className="pointer-events-none absolute inset-0 z-[6] flex flex-col items-center justify-center px-4">
+      <div className="flex w-full max-w-[320px] flex-col items-center">
+        <div className="flex items-center gap-3">
+          <div className="text-[34px] font-black italic leading-none tracking-tight text-[#e10600]">UFC</div>
+          <div className="h-8 w-px bg-white/70" />
+          <div className="flex flex-col items-start leading-none">
+            <img src="/plan.png" alt="" className="mb-0.5 h-5 w-auto object-contain" />
+            <div className="text-[22px] font-black italic tracking-tight text-[#e93d52]">Aviator</div>
+          </div>
+        </div>
+        <div className="mt-2 text-[11px] font-extrabold tracking-[0.18em] text-white">OFFICIAL PARTNERS</div>
+        <div className="mt-3 h-[6px] w-full max-w-[240px] overflow-hidden rounded-full bg-[#2a2a2e]">
+          <div
+            className="h-full rounded-full bg-[#e10600] transition-[width] duration-200 ease-linear"
+            style={{ width: `${clamp(waitingPct, 2, 100)}%` }}
+          />
+        </div>
+        <div className="mt-4 rounded-xl bg-[#0f3d24] px-4 py-2.5 text-center ring-1 ring-[#1a5c38]">
+          <div className="flex items-center justify-center gap-2">
+            <svg width="18" height="18" viewBox="0 0 42 42" aria-hidden>
+              <circle cx="21" cy="21" r="14" fill="none" stroke="white" strokeWidth="3" strokeDasharray="2 3" />
+              <circle cx="21" cy="21" r="5" fill="white" />
+            </svg>
+            <span className="text-[15px] font-black tracking-wide text-white">SPRIBE</span>
+          </div>
+          <div className="mt-1.5 inline-flex items-center gap-1 rounded-full border border-[#39ef65]/55 px-2 py-0.5 text-[10px] font-bold text-[#b8f5c8]">
+            Official Game
+            <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[#28a909] text-[8px] text-white">✓</span>
+          </div>
+          <div className="mt-1 text-[9px] font-semibold text-white/70">Since 2019</div>
+        </div>
+        {betAccepted ? (
+          <div className="mt-3 rounded-full border border-[#28a909]/40 bg-[#28a909]/20 px-3 py-1 text-[11px] font-bold tracking-wide text-[#39ef65]">
+            BET ACCEPTED
+          </div>
+        ) : null}
+      </div>
+      {/* Plane comes from AviatorCurve (same flight sprite). Only player count here. */}
+      <div className="absolute right-2 bottom-2 z-[7] flex items-center rounded-full bg-black/55 px-1.5 py-1 ring-1 ring-white/10">
+        <div className="flex -space-x-1.5 pr-1.5">
+          {AVATARS.slice(0, 3).map((src) => (
+            <span
+              key={src}
+              className="h-4 w-4 rounded-full bg-cover bg-center ring-1 ring-black/55"
+              style={{ backgroundImage: `url("${src}")` }}
+            />
+          ))}
+        </div>
+        <span className="text-[9px] font-bold tabular-nums text-white/85">{playersLabel}</span>
       </div>
     </div>
   );

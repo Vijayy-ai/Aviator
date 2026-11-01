@@ -19,6 +19,13 @@ import { db } from '../../config/firebase';
 import { uploadGameImage, getImageStorageLabel } from '../../config/imageUpload';
 import { cleanGameImageUrl, needsImageUrlFix, isUploadcareUrl } from '../../utils/gameImage';
 import { useTheme } from '../../theme/ThemeContext';
+import {
+  getFontSize,
+  getSpacing,
+  getButtonHeight,
+  safeAreaTop,
+  responsiveWidth,
+} from '../../utils/responsive';
 
 // Memoized Game Item Component
 const GameItem = React.memo(({ item, theme, onTogglePin, onEdit, onDelete, onUrlFixed }) => {
@@ -155,7 +162,6 @@ export default function GamesManagementScreen() {
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    console.log('Manual refresh triggered...');
     await fetchGames();
     setRefreshing(false);
   }, []);
@@ -185,7 +191,6 @@ export default function GamesManagementScreen() {
 
   const uploadImage = async (imageUri) => {
     try {
-      console.log(`Uploading image to ${getImageStorageLabel()}...`);
       return await uploadGameImage(imageUri);
     } catch (error) {
       console.error('Error uploading image:', error);
@@ -270,7 +275,6 @@ export default function GamesManagementScreen() {
       let imageChanged = false;
       
       if (formData.imageUrl && formData.imageUrl !== selectedGame.imageUrl) {
-        console.log('Uploading new image...');
         // Local picks need upload; remote http(s) can be migrated through uploadGameImage
         if (formData.imageUrl.startsWith('http://') || formData.imageUrl.startsWith('https://')) {
           if (isUploadcareUrl(formData.imageUrl)) {
@@ -282,10 +286,8 @@ export default function GamesManagementScreen() {
           finalImageUrl = await uploadImage(formData.imageUrl);
         }
         imageChanged = true;
-        console.log('New image URL:', finalImageUrl);
       }
 
-      console.log('Updating game with new image URL:', finalImageUrl);
       
       await updateDoc(doc(db, 'games', selectedGame.id), {
         title: formData.title.trim(),
@@ -300,7 +302,6 @@ export default function GamesManagementScreen() {
       setSelectedGame(null);
       
       // Force refresh the games list
-      console.log('Refreshing games list...');
       await fetchGames();
       
       if (imageChanged) {
@@ -666,30 +667,30 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 60,
-    paddingBottom: 20,
+    paddingHorizontal: getSpacing(16),
+    paddingTop: safeAreaTop + getSpacing(12),
+    paddingBottom: getSpacing(14),
     borderBottomWidth: 1,
   },
   headerTitle: {
-    fontSize: 20,
+    fontSize: getFontSize(18),
     fontWeight: 'bold',
   },
   addButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: getSpacing(40),
+    height: getSpacing(40),
+    borderRadius: getSpacing(20),
     justifyContent: 'center',
     alignItems: 'center',
   },
   gamesList: {
-    padding: 16,
-    paddingBottom: 48,
+    padding: getSpacing(12),
+    paddingBottom: getSpacing(48),
   },
   gameCard: {
-    borderRadius: 16,
-    marginBottom: 16,
-    padding: 16,
+    borderRadius: getSpacing(14),
+    marginBottom: getSpacing(12),
+    padding: getSpacing(12),
     shadowOffset: {
       width: 0,
       height: 2,
@@ -709,14 +710,15 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   gameImage: {
-    width: 80,
-    height: 80,
-    borderRadius: 12,
-    marginRight: 16,
+    width: Math.min(responsiveWidth(18), 72),
+    height: Math.min(responsiveWidth(18), 72),
+    borderRadius: getSpacing(10),
+    marginRight: getSpacing(12),
   },
   gameInfo: {
     flex: 1,
     justifyContent: 'center',
+    minWidth: 0,
   },
   titleContainer: {
     flexDirection: 'row',
@@ -725,9 +727,10 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   gameTitle: {
-    fontSize: 16,
+    fontSize: getFontSize(15),
     fontWeight: 'bold',
     marginRight: 8,
+    flexShrink: 1,
   },
   pinnedBadgeInline: {
     backgroundColor: '#FF9500',
@@ -737,16 +740,16 @@ const styles = StyleSheet.create({
   },
   pinnedTextInline: {
     color: 'white',
-    fontSize: 10,
+    fontSize: getFontSize(10),
     fontWeight: 'bold',
   },
   gameDescription: {
-    fontSize: 13,
-    lineHeight: 18,
+    fontSize: getFontSize(12),
+    lineHeight: getFontSize(17),
     marginBottom: 4,
   },
   gameLink: {
-    fontSize: 12,
+    fontSize: getFontSize(11),
     fontWeight: '500',
   },
   gameActionsLine: {

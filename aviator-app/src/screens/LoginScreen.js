@@ -54,7 +54,6 @@ export default function LoginScreen({ navigation }) {
         }
       }
     } catch (error) {
-      console.log('Error fetching telegram link on LoginScreen:', error);
     }
   };
 

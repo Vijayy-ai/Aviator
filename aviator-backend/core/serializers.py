@@ -16,9 +16,9 @@ class UserProfileSerializer(serializers.ModelSerializer):
         fields = [
             "firebase_uid",
             "username",
+            "public_uid",
             "platform_type",
             "fake_wallet_balance",
-            "phone",
             "invite_code",
             "total_bonus",
             "today_bonus",

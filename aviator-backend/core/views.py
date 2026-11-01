@@ -107,6 +107,44 @@ def generate_invite_code() -> str:
     return secrets.token_hex(8)
 
 
+_DISPLAY_ADJECTIVES = (
+    "Lucky", "Swift", "Bright", "Cool", "Happy", "Mighty", "Silent", "Golden",
+    "Brave", "Sunny", "Rapid", "Noble", "Clever", "Bold", "Calm", "Wild",
+)
+_DISPLAY_NOUNS = (
+    "Fox", "Ace", "Tiger", "Eagle", "Wolf", "Lion", "Shark", "Hawk",
+    "Panda", "Falcon", "Cobra", "Dragon", "Phoenix", "Raven", "Bear", "Owl",
+)
+
+
+def generate_display_name() -> str:
+    for _ in range(12):
+        name = f"{secrets.choice(_DISPLAY_ADJECTIVES)}{secrets.choice(_DISPLAY_NOUNS)}{secrets.randbelow(90) + 10}"
+        if not UserProfile.objects.filter(username=name).exists():
+            return name
+    return f"Player{secrets.token_hex(3)}"
+
+
+def generate_public_uid() -> str:
+    for _ in range(24):
+        uid = f"{secrets.randbelow(90_000_000) + 10_000_000}"
+        if not UserProfile.objects.filter(public_uid=uid).exists():
+            return uid
+    return f"{secrets.randbelow(90_000_000) + 10_000_000}"
+
+
+def ensure_public_uid(profile: UserProfile) -> None:
+    if profile.public_uid:
+        return
+    profile.public_uid = generate_public_uid()
+    profile.save(update_fields=["public_uid", "updated_at"])
+
+
+def looks_like_phone_username(value: str) -> bool:
+    digits = "".join(ch for ch in (value or "") if ch.isdigit())
+    return len(digits) >= 10 and digits == "".join(ch for ch in value if ch.isdigit())
+
+
 def roll_today_bonus(profile: UserProfile) -> None:
     today = timezone.localdate()
     if profile.bonus_date == today:
@@ -180,8 +218,9 @@ class FirebaseLoginView(APIView):
             return Response({"detail": "Invalid Firebase token"}, status=status.HTTP_401_UNAUTHORIZED)
 
         email = decoded.get("email") or ""
-        display_name = decoded.get("name") or ""
-        username = display_name or email.split("@")[0] if email else firebase_uid
+        firebase_name = (decoded.get("name") or "").strip()
+        # Never use phone digits / synthetic email local-part as the visible display name.
+        initial_username = firebase_name if firebase_name and not looks_like_phone_username(firebase_name) else generate_display_name()
 
         platform_type = UserProfile.PlatformType.APP if source == "app" else UserProfile.PlatformType.WEB
 
@@ -192,7 +231,8 @@ class FirebaseLoginView(APIView):
         profile, created = UserProfile.objects.select_for_update().get_or_create(
             firebase_uid=firebase_uid,
             defaults={
-                "username": username[:150],
+                "username": initial_username[:150],
+                "public_uid": generate_public_uid(),
                 "platform_type": platform_type,
                 "invite_code": generate_invite_code(),
                 "phone": phone,
@@ -202,6 +242,7 @@ class FirebaseLoginView(APIView):
         if not profile.invite_code:
             profile.invite_code = generate_invite_code()
             profile.save(update_fields=["invite_code", "updated_at"])
+        ensure_public_uid(profile)
 
         # Cross-login rule enforcement
         if not created and profile.platform_type != platform_type:
@@ -210,10 +251,15 @@ class FirebaseLoginView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        # Keep username somewhat fresh (non-destructive)
-        if username and profile.username != username[:150]:
-            profile.username = username[:150]
+        # Repair legacy accounts that still show phone digits as username.
+        # Never overwrite a user-chosen display name on login.
+        if not profile.username.strip() or looks_like_phone_username(profile.username):
+            profile.username = generate_display_name()[:150]
             profile.save(update_fields=["username", "updated_at"])
+
+        if phone and not profile.phone:
+            profile.phone = phone
+            profile.save(update_fields=["phone", "updated_at"])
 
         # Optional: link to a Django user row (keeps future relational data easy)
         User = get_user_model()
@@ -241,6 +287,10 @@ class MeView(APIView):
         profile = UserProfile.objects.get(user=request.user)
         roll_today_bonus(profile)
         ensure_own_invite_code(profile)
+        ensure_public_uid(profile)
+        if not profile.username.strip() or looks_like_phone_username(profile.username):
+            profile.username = generate_display_name()[:150]
+            profile.save(update_fields=["username", "updated_at"])
         return Response({"profile": UserProfileSerializer(profile).data})
 
 
@@ -319,6 +369,10 @@ class PlaceBetView(APIView):
             status=Transaction.Status.COMPLETED,
         )
 
+        from .game_engine import broadcast_live_bet
+
+        broadcast_live_bet("placed", bet, profile)
+
         return Response(
             {"bet": BetSerializer(bet).data, "profile": UserProfileSerializer(profile).data},
             status=status.HTTP_201_CREATED,
@@ -363,6 +417,10 @@ class CashoutView(APIView):
             transaction_type=Transaction.Type.WIN,
             status=Transaction.Status.COMPLETED,
         )
+
+        from .game_engine import broadcast_live_bet
+
+        broadcast_live_bet("cashed", bet, profile)
 
         return Response({"bet": BetSerializer(bet).data, "profile": UserProfileSerializer(profile).data})
 
@@ -619,7 +677,14 @@ class TransactionHistoryView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        transactions = Transaction.objects.filter(user=request.user).order_by("-created_at")[:100]
+        # Payment history only — gameplay (BET/WIN/REFUND) belongs in Game History.
+        transactions = (
+            Transaction.objects.filter(
+                user=request.user,
+                transaction_type__in=[Transaction.Type.DEPOSIT, Transaction.Type.WITHDRAW],
+            )
+            .order_by("-created_at")[:100]
+        )
         return Response({"transactions": TransactionSerializer(transactions, many=True).data})
 
 
@@ -638,7 +703,9 @@ class GameHistoryView(APIView):
 
 
 def _mask_name(profile: UserProfile) -> str:
-    raw = (profile.phone or profile.username or "user")[:12]
+    raw = (profile.username or "Player")[:12]
+    if looks_like_phone_username(raw):
+        raw = "Player"
     if len(raw) <= 4:
         return raw
     return f"{raw[:3]}***{raw[-2:]}"
