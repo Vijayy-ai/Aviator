@@ -3,8 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { MobileShell } from "@/components/layout/MobileShell";
-import { createRazorpayOrder, fetchWalletLimits, verifyRazorpayPayment } from "@/lib/api";
-import { loadRazorpayScript, openRazorpayCheckout } from "@/lib/razorpay";
+import { createDepositCheckout, fetchWalletLimits } from "@/lib/api";
 
 const QUICK_AMOUNTS = ["500", "1000", "2000", "5000"];
 
@@ -38,69 +37,17 @@ export default function DepositPage() {
     try {
       setLoading(true);
       setError(null);
-      setStatus("Creating order…");
+      setStatus("Creating payment link…");
 
-      const order = await createRazorpayOrder({ amount: val.toFixed(2), currency: "INR" });
-      const key =
-        process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID?.trim() ||
-        order.key_id?.trim() ||
-        "";
-      if (!key) {
-        throw new Error("Razorpay key is not configured");
-      }
+      const { url } = await createDepositCheckout({ amount: val.toFixed(2) });
+      if (!url) throw new Error("No payment URL returned");
 
-      setStatus("Opening payment…");
-      await loadRazorpayScript();
-
-      await new Promise<void>((resolve, reject) => {
-        const rzp = openRazorpayCheckout({
-          key,
-          amount: order.amount,
-          currency: order.currency || "INR",
-          name: "Tc Lottery",
-          description: `Wallet deposit ₹${val.toFixed(2)}`,
-          order_id: order.order_id,
-          theme: { color: "#f95959" },
-          handler: (response) => {
-            void (async () => {
-              try {
-                setStatus("Verifying payment…");
-                await verifyRazorpayPayment({
-                  razorpay_order_id: response.razorpay_order_id,
-                  razorpay_payment_id: response.razorpay_payment_id,
-                  razorpay_signature: response.razorpay_signature,
-                });
-                setStatus("Payment successful");
-                resolve();
-                router.push("/account");
-              } catch (err) {
-                reject(err instanceof Error ? err : new Error("Verification failed"));
-              }
-            })();
-          },
-          modal: {
-            ondismiss: () => {
-              reject(new Error("Payment cancelled"));
-            },
-          },
-        });
-
-        rzp.on("payment.failed", (response) => {
-          const msg = response?.error?.description || response?.error?.reason || "Payment failed";
-          reject(new Error(msg));
-        });
-
-        rzp.open();
-      });
+      setStatus("Redirecting to Razorpay…");
+      window.location.href = url;
     } catch (err) {
       const message = err instanceof Error ? err.message : "Deposit failed";
-      if (message !== "Payment cancelled") {
-        setError(message);
-      } else {
-        setError("Payment was cancelled.");
-      }
+      setError(message);
       setStatus(null);
-    } finally {
       setLoading(false);
     }
   }
@@ -153,7 +100,7 @@ export default function DepositPage() {
             disabled={loading}
             className="w-full rounded-2xl bg-gradient-to-r from-rose-500 to-orange-400 py-3.5 text-base font-extrabold text-white shadow-sm active:scale-[0.98] disabled:opacity-70"
           >
-            {loading ? "Processing…" : "Deposit Amount"}
+            {loading ? "Redirecting…" : "Deposit Amount"}
           </button>
         </form>
       </div>

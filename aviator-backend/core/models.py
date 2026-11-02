@@ -180,6 +180,63 @@ class SiteSettings(models.Model):
         return (self.admin_password_hash or "")[:24]
 
 
+class DepositOrder(models.Model):
+    """Pending/settled Razorpay Payment Link deposit. Credits are granted only via webhook."""
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        PAID = "paid", "Paid"
+        FAILED = "failed", "Failed"
+        EXPIRED = "expired", "Expired"
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="deposit_orders",
+        db_index=True,
+    )
+    # Stable label for notes / UI (amount-based deposits; not a fixed pack catalog)
+    pack_id = models.CharField(max_length=64, default="custom")
+    credits = models.PositiveIntegerField()
+    amount_paise = models.PositiveIntegerField()
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.PENDING,
+        db_index=True,
+    )
+    payment_link_id = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    razorpay_payment_id = models.CharField(max_length=64, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self) -> str:
+        return f"DepositOrder {self.id} {self.status} {self.amount_paise}p"
+
+
+class DepositPayment(models.Model):
+    """Idempotency record for a Razorpay payment id (unique)."""
+
+    razorpay_payment_id = models.CharField(max_length=64, unique=True)
+    deposit_order = models.ForeignKey(
+        DepositOrder,
+        on_delete=models.CASCADE,
+        related_name="payments",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="deposit_payments",
+    )
+    amount_paise = models.PositiveIntegerField()
+    method = models.CharField(max_length=64, blank=True, default="")
+    raw_event = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self) -> str:
+        return f"DepositPayment {self.razorpay_payment_id}"
+
+
 class WithdrawRequest(models.Model):
     class Status(models.TextChoices):
         PENDING = "PENDING", "Pending"

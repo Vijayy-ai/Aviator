@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import SiteSettings, Transaction, UserProfile, WithdrawRequest
+from .models import DepositOrder, DepositPayment, SiteSettings, Transaction, UserProfile, WithdrawRequest
 
 
 @admin.register(UserProfile)
@@ -15,6 +15,28 @@ class TransactionAdmin(admin.ModelAdmin):
     list_display = ("id", "user", "transaction_type", "amount", "status", "created_at")
     list_filter = ("transaction_type", "status")
     search_fields = ("user__username", "external_id")
+
+
+@admin.register(DepositOrder)
+class DepositOrderAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "user",
+        "amount_paise",
+        "credits",
+        "status",
+        "payment_link_id",
+        "razorpay_payment_id",
+        "created_at",
+    )
+    list_filter = ("status",)
+    search_fields = ("payment_link_id", "razorpay_payment_id", "user__username")
+
+
+@admin.register(DepositPayment)
+class DepositPaymentAdmin(admin.ModelAdmin):
+    list_display = ("id", "razorpay_payment_id", "deposit_order", "user", "amount_paise", "method", "created_at")
+    search_fields = ("razorpay_payment_id",)
 
 
 @admin.register(WithdrawRequest)

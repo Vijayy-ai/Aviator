@@ -4,6 +4,8 @@ from decimal import Decimal, ROUND_HALF_UP
 from datetime import timedelta
 import hashlib
 import hmac
+import json
+import logging
 import secrets
 import time
 
@@ -17,10 +19,18 @@ from rest_framework.permissions import IsAuthenticated, BasePermission, AllowAny
 
 from firebase_admin import auth as firebase_auth
 
+from .deposit_razorpay import (
+    create_payment_link_for_order,
+    process_webhook_event,
+    require_razorpay_deposit_config,
+    rupees_to_paise,
+    verify_webhook_signature,
+)
 from .firebase import get_firebase_app
 from .models import (
     Bet,
     Commission,
+    DepositOrder,
     GameRound,
     GiftClaim,
     GiftCode,
@@ -52,6 +62,8 @@ from .serializers import (
     WithdrawRequestSerializer,
 )
 from .state import get_state
+
+logger = logging.getLogger(__name__)
 
 REBATE_RATE = Decimal("0.006")
 ADMIN_TOKEN_SALT = "aviator-admin-panel"
@@ -467,7 +479,7 @@ class CancelBetView(APIView):
 
 
 class DepositView(APIView):
-    """Legacy free-credit endpoint — disabled. Use Razorpay /api/create-order/."""
+    """Legacy free-credit endpoint — disabled. Use Razorpay Payment Link checkout."""
 
     permission_classes = [IsAuthenticated]
 
@@ -965,3 +977,132 @@ class VerifyRazorpayPaymentView(APIView):
                 "profile": UserProfileSerializer(profile).data,
             }
         )
+
+
+class DepositCheckoutView(APIView):
+    """
+    POST /api/credits/checkout/ — create DepositOrder + Razorpay Payment Link, return {url, orderId}.
+    Amount comes from the client but is re-validated against SiteSettings.min_deposit;
+    credits granted later equal the stored order amount (1 INR = 1 wallet credit).
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        raw_amount = request.data.get("amount", None)
+        try:
+            if raw_amount is None or str(raw_amount).strip() == "":
+                return Response({"detail": "amount is required."}, status=status.HTTP_400_BAD_REQUEST)
+            rupees = Decimal(str(raw_amount))
+            if rupees <= 0:
+                return Response({"detail": "Amount must be greater than 0."}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            return Response({"detail": "Invalid amount."}, status=status.HTTP_400_BAD_REQUEST)
+
+        limits = get_wallet_limits()
+        if rupees < limits.min_deposit:
+            return Response(
+                {"detail": f"Minimum deposit is ₹{limits.min_deposit}."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        amount_paise = rupees_to_paise(rupees)
+        # Wallet credits track INR 1:1 (stored as whole rupees for credits field)
+        credits = int(rupees.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+        if credits < 1:
+            credits = 1
+
+        try:
+            require_razorpay_deposit_config()
+        except RazorpayConfigError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        order = DepositOrder.objects.create(
+            user=request.user,
+            pack_id="custom",
+            credits=credits,
+            amount_paise=amount_paise,
+            status=DepositOrder.Status.PENDING,
+        )
+
+        try:
+            link = create_payment_link_for_order(order)
+        except Exception as e:
+            order.status = DepositOrder.Status.FAILED
+            order.save(update_fields=["status", "updated_at"])
+            logger.error("Razorpay payment_link.create failed order_id=%s err=%s", order.id, e)
+            return Response(
+                {"detail": "Payment provider unavailable. Please try again."},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        short_url = link.get("short_url") or link.get("url") or ""
+        link_id = str(link.get("id") or "")
+        order.payment_link_id = link_id
+        order.save(update_fields=["payment_link_id", "updated_at"])
+
+        if not short_url:
+            order.status = DepositOrder.Status.FAILED
+            order.save(update_fields=["status", "updated_at"])
+            logger.error("Razorpay payment link missing short_url order_id=%s body=%s", order.id, link)
+            return Response(
+                {"detail": "Payment provider unavailable. Please try again."},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        return Response({"url": short_url, "orderId": order.id})
+
+
+class DepositOrderStatusView(APIView):
+    """GET /api/credits/orders/<id>/ — authenticated status poll for /payment/return (read-only)."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, order_id: int):
+        try:
+            order = DepositOrder.objects.select_related("user").get(pk=order_id, user=request.user)
+        except DepositOrder.DoesNotExist:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        profile = UserProfile.objects.get(user=request.user)
+        return Response(
+            {
+                "orderId": order.id,
+                "status": order.status,
+                "amount_paise": order.amount_paise,
+                "credits": order.credits,
+                "balance": str(profile.fake_wallet_balance),
+            }
+        )
+
+
+class RazorpayWebhookView(APIView):
+    """
+    POST /api/webhooks/razorpay/ — verify HMAC over raw body, then process.
+    Credits are granted only here (payment_link.paid → grant_from_payment_link_paid).
+    """
+
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        # Django caches the exact request bytes on request.body — do not re-serialize JSON.
+        raw_body = request.body
+        signature = request.headers.get("X-Razorpay-Signature") or request.META.get(
+            "HTTP_X_RAZORPAY_SIGNATURE", ""
+        )
+        if not signature or not verify_webhook_signature(raw_body, signature):
+            return Response({"detail": "Invalid signature."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            event = json.loads(raw_body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return Response({"detail": "Invalid JSON."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Signature OK → always 200 so Razorpay does not retry forever; errors are logged.
+        try:
+            process_webhook_event(event)
+        except Exception:
+            logger.exception("Unhandled webhook error event=%s", event.get("event"))
+
+        return Response({"status": "ok"})

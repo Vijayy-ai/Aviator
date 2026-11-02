@@ -24,9 +24,12 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 load_dotenv(BASE_DIR / ".env")
 
-# Razorpay (server-side only — never expose KEY_SECRET to the frontend)
+# Razorpay (server-side only — never expose KEY_SECRET / WEBHOOK_SECRET to the frontend)
 RAZORPAY_KEY_ID = os.environ.get("RAZORPAY_KEY_ID", "").strip()
 RAZORPAY_KEY_SECRET = os.environ.get("RAZORPAY_KEY_SECRET", "").strip()
+RAZORPAY_WEBHOOK_SECRET = os.environ.get("RAZORPAY_WEBHOOK_SECRET", "").strip()
+# Public web app origin used for Payment Link callback_url (no trailing slash)
+APP_BASE_URL = os.environ.get("APP_BASE_URL", "").rstrip("/")
 
 # Comma-separated Firebase/login emails that can use /api/admin/* (also Django is_staff)
 ADMIN_EMAILS = [

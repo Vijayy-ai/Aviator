@@ -10,6 +10,8 @@ import { buildRoundBets, crowdCashed, crowdTotal, PLAYER_FACES, settleBotsAtMult
 
 const FORCE_AVIATOR_SIM = false;
 const ALLOW_SIM_FALLBACK = false;
+/** Smallest allowed bet (INR). +/- steps also use this floor. */
+const MIN_BET_INR = 10;
 
 type WaitingPayload = { status: "waiting"; time_left: number; round_id: number; round_number: number };
 type FlyingPayload = { status: "flying"; current_multiplier: number; round_id: number; round_number: number };
@@ -841,14 +843,13 @@ export default function GamePage() {
     if (status === "waiting" && state.placedRoundId === roundId) return;
 
     const amountN = parsePositiveNumber(state.amount);
-    if (!Number.isFinite(amountN) || amountN < 1) {
-      setP((p) => ({ ...p, lastActionError: "Invalid bet amount" }));
+    const available = parsePositiveNumber(wallet ?? "0") + localAdjust;
+    if (!Number.isFinite(amountN) || amountN < MIN_BET_INR) {
+      setP((p) => ({ ...p, lastActionError: "Low balance" }));
       return;
     }
-
-    const available = parsePositiveNumber(wallet ?? "0") + localAdjust;
-    if (!Number.isFinite(available) || available + 1e-9 < amountN) {
-      setP((p) => ({ ...p, lastActionError: "Insufficient balance" }));
+    if (!Number.isFinite(available) || available + 1e-9 < amountN || available < MIN_BET_INR) {
+      setP((p) => ({ ...p, lastActionError: "Low balance" }));
       return;
     }
 
@@ -2318,7 +2319,7 @@ function BetPanel({
               onClick={() =>
                 setState((p) => {
                   const n = parsePositiveNumber(p.amount);
-                  const next = Number.isFinite(n) ? Math.max(0, n - 1) : 0;
+                  const next = Number.isFinite(n) ? Math.max(MIN_BET_INR, n - 10) : MIN_BET_INR;
                   return { ...p, amount: next.toFixed(2) };
                 })
               }
@@ -2335,7 +2336,7 @@ function BetPanel({
               onClick={() =>
                 setState((p) => {
                   const n = parsePositiveNumber(p.amount);
-                  const next = Number.isFinite(n) ? n + 1 : 10;
+                  const next = Number.isFinite(n) ? n + 10 : MIN_BET_INR;
                   return { ...p, amount: next.toFixed(2) };
                 })
               }

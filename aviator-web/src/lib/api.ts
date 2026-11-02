@@ -373,6 +373,43 @@ export async function deposit(params: { amount: string }) {
   return data as { profile: { fake_wallet_balance: string } };
 }
 
+/** Hosted Payment Link checkout — no checkout.js. Credits granted only by webhook. */
+export async function createDepositCheckout(params: { amount: string }) {
+  const headers = await authHeaders();
+  const res = await fetch(`${API_BASE_URL}/api/credits/checkout/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...headers },
+    credentials: "include",
+    body: JSON.stringify(params),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(typeof data?.detail === "string" ? data.detail : "Could not create payment link");
+  }
+  return data as { url: string; orderId: number };
+}
+
+/** Read-only poll for /payment/return — never mutates balance. */
+export async function fetchDepositOrderStatus(orderId: string | number) {
+  const headers = await authHeaders();
+  const res = await fetch(`${API_BASE_URL}/api/credits/orders/${orderId}/`, {
+    headers,
+    credentials: "include",
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(typeof data?.detail === "string" ? data.detail : "Could not load order status");
+  }
+  return data as {
+    orderId: number;
+    status: "pending" | "paid" | "failed" | "expired";
+    amount_paise: number;
+    credits: number;
+    balance: string;
+  };
+}
+
+/** @deprecated Orders + checkout.js path — prefer createDepositCheckout */
 export async function createRazorpayOrder(params: { amount: string; currency?: string }) {
   const headers = await authHeaders();
   const res = await fetch(`${API_BASE_URL}/api/create-order/`, {
@@ -385,6 +422,7 @@ export async function createRazorpayOrder(params: { amount: string; currency?: s
   return data as { order_id: string; amount: number; currency: string; key_id?: string };
 }
 
+/** @deprecated Prefer webhook-based Payment Links */
 export async function verifyRazorpayPayment(params: {
   razorpay_order_id: string;
   razorpay_payment_id: string;

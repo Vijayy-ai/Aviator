@@ -31,7 +31,7 @@ class UpdateUsernameSerializer(serializers.Serializer):
 
 class PlaceBetSerializer(serializers.Serializer):
     round_id = serializers.IntegerField()
-    bet_amount = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=1)
+    bet_amount = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=10)
     slot = serializers.IntegerField(min_value=1, max_value=2, default=1)
 
 
