@@ -3,16 +3,19 @@
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { MobileShell } from "@/components/layout/MobileShell";
+import { useFirebaseUser } from "@/hooks/useFirebaseUser";
 import { fetchDepositOrderStatus } from "@/lib/api";
 
-type PollState = "loading" | "paid" | "confirming" | "timeout" | "error";
+type PollState = "waiting_auth" | "loading" | "paid" | "confirming" | "timeout" | "error";
 
 function PaymentReturnInner() {
   const router = useRouter();
   const params = useSearchParams();
   const orderId = params.get("order");
+  const razorpayPaymentId = params.get("razorpay_payment_id");
+  const { user, ready } = useFirebaseUser();
 
-  const [state, setState] = useState<PollState>("loading");
+  const [state, setState] = useState<PollState>("waiting_auth");
   const [balance, setBalance] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -22,10 +25,19 @@ function PaymentReturnInner() {
       setError("Missing order id.");
       return;
     }
+    if (!ready) {
+      setState("waiting_auth");
+      return;
+    }
+    if (!user) {
+      setState("error");
+      setError("Please log in again to see your updated balance. Your payment is safe — credits are added by the server.");
+      return;
+    }
 
     let cancelled = false;
     let attempts = 0;
-    const maxAttempts = 15; // 30s at 2s interval
+    const maxAttempts = 15;
 
     async function tick() {
       try {
@@ -52,11 +64,12 @@ function PaymentReturnInner() {
       }
     }
 
+    setState("loading");
     void tick();
     return () => {
       cancelled = true;
     };
-  }, [orderId]);
+  }, [orderId, ready, user]);
 
   return (
     <MobileShell>
@@ -68,9 +81,11 @@ function PaymentReturnInner() {
       </div>
       <div className="p-4">
         <div className="space-y-3 rounded-3xl bg-white p-5 shadow-sm ring-1 ring-zinc-200/70">
-          {state === "loading" || state === "confirming" ? (
+          {state === "waiting_auth" || state === "loading" || state === "confirming" ? (
             <>
-              <p className="text-base font-bold text-zinc-900">We&apos;re confirming your payment</p>
+              <p className="text-base font-bold text-zinc-900">
+                {razorpayPaymentId ? "Payment received" : "We're confirming your payment"}
+              </p>
               <p className="text-sm font-medium text-zinc-500">
                 Your credits will appear in a few seconds. Please wait…
               </p>
@@ -97,7 +112,7 @@ function PaymentReturnInner() {
             <>
               <p className="text-base font-bold text-zinc-900">Still confirming</p>
               <p className="text-sm font-medium text-zinc-500">
-                Payment may take a moment. Refresh this page or check your wallet shortly.
+                Payment may take a moment. Check Account → Transaction, or refresh.
               </p>
               <button
                 type="button"
@@ -111,8 +126,13 @@ function PaymentReturnInner() {
 
           {state === "error" ? (
             <>
-              <p className="text-base font-bold text-rose-500">Something went wrong</p>
+              <p className="text-base font-bold text-rose-500">Could not show status</p>
               <p className="text-sm font-medium text-zinc-500">{error}</p>
+              {razorpayPaymentId ? (
+                <p className="text-sm font-medium text-emerald-700">
+                  Razorpay payment id: {razorpayPaymentId}. If webhook ran, ₹ credit is already in your wallet — open Account to verify.
+                </p>
+              ) : null}
               <button
                 type="button"
                 onClick={() => router.push("/account")}
