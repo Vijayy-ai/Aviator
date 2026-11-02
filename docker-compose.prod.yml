@@ -1,0 +1,20 @@
+# Production overlay: backend only on localhost (Nginx proxies 80/443).
+# Usage on VM: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# Requires project .env (next to this file) with DATABASE_URL=... for Supabase.
+services:
+  redis:
+    ports: !override []
+    expose:
+      - "6379"
+
+  backend:
+    ports: !override
+      - "127.0.0.1:8000:8000"
+    environment:
+      DJANGO_DEBUG: "0"
+      DATABASE_URL: ${DATABASE_URL}
+
+  game-engine:
+    environment:
+      DJANGO_DEBUG: "0"
+      DATABASE_URL: ${DATABASE_URL}
