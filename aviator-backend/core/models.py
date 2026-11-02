@@ -140,7 +140,7 @@ class SiteSettings(models.Model):
 
     DEFAULT_ADMIN_PASSWORD = "Admin@123"
 
-    min_deposit = models.DecimalField(max_digits=12, decimal_places=2, default=500)
+    min_deposit = models.DecimalField(max_digits=12, decimal_places=2, default=1)
     min_withdraw = models.DecimalField(max_digits=12, decimal_places=2, default=1000)
     admin_password_hash = models.CharField(max_length=128, blank=True, default="")
     updated_at = models.DateTimeField(auto_now=True)

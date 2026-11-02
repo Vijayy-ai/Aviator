@@ -159,7 +159,7 @@ class CheckoutAuthTests(TestCase):
 
     def test_below_min_deposit_400(self):
         self.client.force_authenticate(user=self.user)
-        res = self.client.post("/api/credits/checkout/", {"amount": "1"}, format="json")
+        res = self.client.post("/api/credits/checkout/", {"amount": "0.5"}, format="json")
         self.assertEqual(res.status_code, 400)
 
 

@@ -5,12 +5,12 @@ import { useRouter } from "next/navigation";
 import { MobileShell } from "@/components/layout/MobileShell";
 import { createDepositCheckout, fetchWalletLimits } from "@/lib/api";
 
-const QUICK_AMOUNTS = ["500", "1000", "2000", "5000"];
+const QUICK_AMOUNTS = ["1", "10", "100", "500", "1000"];
 
 export default function DepositPage() {
   const router = useRouter();
   const [amount, setAmount] = useState("");
-  const [minDeposit, setMinDeposit] = useState(500);
+  const [minDeposit, setMinDeposit] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
@@ -22,7 +22,7 @@ export default function DepositPage() {
         if (Number.isFinite(n) && n > 0) setMinDeposit(n);
       })
       .catch(() => {
-        /* keep default 500 */
+        /* keep default 1 */
       });
   }, []);
 
