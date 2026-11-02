@@ -160,15 +160,13 @@ export default function HomeScreen({ navigation }) {
         });
       }
 
-      // Sort: Pinned (Trending) games sorted alphabetically at the top,
-      // followed by Non-Pinned games sorted alphabetically below them.
+      // Pinned/trending first (A→Z among themselves), then other games A→Z
       const sortedGames = gamesData.sort((a, b) => {
         if (a.isPinned && !b.isPinned) return -1;
         if (!a.isPinned && b.isPinned) return 1;
-        
         const titleA = (a.title || '').trim().toLowerCase();
         const titleB = (b.title || '').trim().toLowerCase();
-        return titleA.localeCompare(titleB);
+        return titleA.localeCompare(titleB, undefined, { sensitivity: 'base' });
       });
       setGames(sortedGames);
     } catch (error) {
