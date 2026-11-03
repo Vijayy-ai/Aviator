@@ -29,7 +29,7 @@ const PREDICTION_CIRCLE = getPredictionCircleSize();
 const PREDICTION_FONT = getPredictionFontSize();
 
 /** Same host the website uses for live rounds. */
-const LIVE_API = 'https://aviator-fcon.onrender.com';
+const LIVE_API = 'https://atorm.duckdns.org';
 const COLD_START_TIMEOUT_MS = 50000;
 const POLL_TIMEOUT_MS = 12000;
 const POLL_MS = 1000;

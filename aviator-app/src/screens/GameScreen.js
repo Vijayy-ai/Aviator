@@ -402,7 +402,7 @@ export default function GameScreen({ route, navigation }) {
   };
 
   const getApiBaseUrl = () => {
-    return 'https://aviator-fcon.onrender.com';
+    return 'https://atorm.duckdns.org';
   };
 
   const showPrediction = async () => {
