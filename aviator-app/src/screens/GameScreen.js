@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -12,13 +12,16 @@ import {
   Dimensions,
   Platform,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import Constants from 'expo-constants';
 import CustomAlert from '../components/CustomAlert';
+import PredictionAccessModal from '../components/PredictionAccessModal';
 import { Ionicons } from '@expo/vector-icons';
 import { collection, addDoc, getDocs, query, where, doc, getDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { db, auth } from '../config/firebase';
 import { useTheme } from '../theme/ThemeContext';
 import { isTcLotteryGame } from '../utils/tcLottery';
+import { toTelegramUserLink } from '../utils/telegram';
 import { 
   getFontSize, 
   getSpacing, 
@@ -47,16 +50,18 @@ export default function GameScreen({ route, navigation }) {
   const [isPending, setIsPending] = useState(false);
   const [isAdminActivated, setIsAdminActivated] = useState(false);
   const [showActivationModal, setShowActivationModal] = useState(false);
+  // Single object so variant + visible update together (avoids locked→pending flash)
+  const [accessModal, setAccessModal] = useState({ visible: false, variant: 'locked' });
   const [activationCode, setActivationCode] = useState('');
   const [prediction, setPrediction] = useState('');
-  const [predictedRound, setPredictedRound] = useState('');
   const [loading, setLoading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [scaleAnim] = useState(new Animated.Value(1));
   const [rotationAnim] = useState(new Animated.Value(0));
   
-  // Dynamic Telegram settings
+  // Dynamic Telegram settings (channel footer + admin DM for Contact Admin)
   const [telegramLink, setTelegramLink] = useState('https://t.me/Aviator_Predictor_V5');
+  const [telegramAdminId, setTelegramAdminId] = useState('');
   const lastRoundRef = React.useRef(null);
   const aviatorPollRef = React.useRef(false);
 
@@ -70,15 +75,20 @@ export default function GameScreen({ route, navigation }) {
 
   useEffect(() => {
     fetchTelegramLink();
-
-    if (isTcLotteryGame(game.title)) {
-      // Live sync lives on PredictionScreen; keep GameScreen activation UX only.
-      setIsActivated(true);
-    } else {
-      checkActivationStatus();
-      checkPendingStatus();
-    }
   }, [game]);
+
+  // Re-check on every focus so if admin deleted the code, UI shows Activate again
+  useFocusEffect(
+    useCallback(() => {
+      if (isTcLotteryGame(game.title)) {
+        // Live sync lives on PredictionScreen; keep GameScreen activation UX only.
+        setIsActivated(true);
+      } else {
+        checkActivationStatus();
+        checkPendingStatus();
+      }
+    }, [game])
+  );
 
   const fetchTelegramLink = async () => {
     try {
@@ -86,8 +96,11 @@ export default function GameScreen({ route, navigation }) {
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
         const data = docSnap.data();
-        if (data && data.url) {
+        if (data?.url) {
           setTelegramLink(data.url);
+        }
+        if (data?.adminId) {
+          setTelegramAdminId(data.adminId);
         }
       }
     } catch (error) {
@@ -123,7 +136,6 @@ export default function GameScreen({ route, navigation }) {
         // Only trigger prediction animation if the round number has changed
         if (lastRoundRef.current !== roundNumber) {
           lastRoundRef.current = roundNumber;
-          setPredictedRound(`Round ${roundNumber}`);
           startPredictionAnimation(crashPoint.toFixed(2) + 'X');
         }
       }
@@ -208,11 +220,31 @@ export default function GameScreen({ route, navigation }) {
       );
       const querySnapshot = await getDocs(pendingQuery);
       
-      if (!querySnapshot.empty) {
-        setIsPending(true);
-      } else {
+      if (querySnapshot.empty) {
         setIsPending(false);
+        return;
       }
+
+      // If admin deleted the code, drop stale pending rows and show Activate again
+      const pendingDoc = querySnapshot.docs[0];
+      const pending = pendingDoc.data();
+      if (pending.codeId) {
+        try {
+          const codeDoc = await getDoc(doc(db, 'codes', pending.codeId));
+          if (!codeDoc.exists()) {
+            await deleteDoc(doc(db, 'pendingActivations', pendingDoc.id));
+            setIsPending(false);
+            return;
+          }
+        } catch (error) {
+          console.error('Error checking pending code status:', error);
+          await deleteDoc(doc(db, 'pendingActivations', pendingDoc.id));
+          setIsPending(false);
+          return;
+        }
+      }
+
+      setIsPending(true);
     } catch (error) {
       console.error('Error checking pending status:', error);
       setIsPending(false);
@@ -429,7 +461,10 @@ export default function GameScreen({ route, navigation }) {
         try {
           const codeDoc = await getDoc(doc(db, 'codes', activation.codeId));
           if (!codeDoc.exists()) {
-            showCustomAlert('Code Deleted', 'The activation code has been deleted by admin. Predictions are locked.', [
+            await deleteDoc(doc(db, 'activatedGames', querySnapshot.docs[0].id));
+            setIsActivated(false);
+            setIsAdminActivated(false);
+            showCustomAlert('Code Deleted', 'The activation code has been deleted by admin. Please activate again with a new code.', [
               { text: 'OK', style: 'default' }
             ]);
             return;
@@ -462,14 +497,12 @@ export default function GameScreen({ route, navigation }) {
         const data = await response.json();
         if (data && data.state) {
           const st = data.state;
-          const roundNumber = Number(st.round_number) || 1;
           const crashPoint = Number(
             st.status === 'crashed' && st.crash_point != null
               ? st.crash_point
               : st.current_crash_point
           ) || 1.0;
 
-          setPredictedRound(`Round ${roundNumber}`);
           startPredictionAnimation(crashPoint.toFixed(2) + 'X');
           return; // Successfully got prediction, exit function!
         }
@@ -495,19 +528,16 @@ export default function GameScreen({ route, navigation }) {
             predictionIndex: (currentIndex + 1) % predictions.length
           });
           
-          setPredictedRound('');
           // Start animation from 1.00X to final prediction
           startPredictionAnimation(prediction);
         } else {
           // No admin predictions available, use random
           const randomPrediction = generateRandomPrediction();
-          setPredictedRound('');
           startPredictionAnimation(randomPrediction);
         }
       } else {
         // For regular codes, use random prediction
         const randomPrediction = generateRandomPrediction();
-        setPredictedRound('');
         startPredictionAnimation(randomPrediction);
       }
     } catch (error) {
@@ -528,29 +558,55 @@ export default function GameScreen({ route, navigation }) {
     }
   };
 
-  const handleGetPrediction = () => {
-    if (!isActivated) {
-      if (isPending) {
-        showCustomAlert(
-          'Info',
-          'Code already applied',
-          [{ text: 'OK', style: 'default' }]
-        );
-        return;
-      }
-      
-      showCustomAlert(
-        'Aviator Predictor v5.0 is not activated!',
-        'To activate Aviator predictor v5.0, it requires activation code. You will have to contact admin for activation code.\n\nTHE ACTIVATION CODE IS PAID.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { 
-            text: 'Contact admin', 
-            onPress: openTelegram,
-            style: 'default'
-          }
-        ]
+  const openAccessModal = (variant = 'locked') => {
+    setAccessModal({ visible: true, variant });
+  };
+
+  const closeAccessModal = () => {
+    setAccessModal((prev) => ({ ...prev, visible: false }));
+  };
+
+  const resolvePendingNow = async () => {
+    try {
+      const userId = auth.currentUser?.uid;
+      if (!userId) return false;
+
+      const pendingQuery = query(
+        collection(db, 'pendingActivations'),
+        where('userId', '==', userId),
+        where('gameId', '==', game.id),
+        where('status', '==', 'pending')
       );
+      const querySnapshot = await getDocs(pendingQuery);
+      if (querySnapshot.empty) {
+        setIsPending(false);
+        return false;
+      }
+
+      const pendingDoc = querySnapshot.docs[0];
+      const pending = pendingDoc.data();
+      if (pending.codeId) {
+        const codeDoc = await getDoc(doc(db, 'codes', pending.codeId));
+        if (!codeDoc.exists()) {
+          await deleteDoc(doc(db, 'pendingActivations', pendingDoc.id));
+          setIsPending(false);
+          return false;
+        }
+      }
+
+      setIsPending(true);
+      return true;
+    } catch (error) {
+      console.error('Error resolving pending status:', error);
+      return isPending;
+    }
+  };
+
+  const handleGetPrediction = async () => {
+    if (!isActivated) {
+      // Re-check pending before open so we never flash the pre-code card
+      const pendingNow = isPending ? true : await resolvePendingNow();
+      openAccessModal(pendingNow ? 'pending' : 'locked');
       return;
     }
 
@@ -566,8 +622,14 @@ export default function GameScreen({ route, navigation }) {
   };
 
   const openTelegram = () => {
-    // Open Telegram channel
+    // Footer / channel join
     Linking.openURL(telegramLink);
+  };
+
+  const openAdminTelegram = () => {
+    // Contact Admin → personal chat (admin ID), fallback to channel
+    const adminLink = toTelegramUserLink(telegramAdminId);
+    Linking.openURL(adminLink || telegramLink);
   };
 
   const goToGame = () => {
@@ -664,11 +726,6 @@ export default function GameScreen({ route, navigation }) {
                   >
                     {prediction}
                   </Text>
-                  {predictedRound ? (
-                    <Text style={[styles.predictionLabel, { color: '#FF6B9D', marginTop: 6 }]} numberOfLines={1}>
-                      {predictedRound}
-                    </Text>
-                  ) : null}
                 </View>
               ) : prediction ? (
                 <View style={styles.predictionContent}>
@@ -680,11 +737,6 @@ export default function GameScreen({ route, navigation }) {
                   >
                     {prediction}
                   </Text>
-                  {predictedRound ? (
-                    <Text style={[styles.predictionLabel, { color: '#FF6B9D', marginTop: 6 }]} numberOfLines={1}>
-                      {predictedRound}
-                    </Text>
-                  ) : null}
                 </View>
               ) : (
                 <View style={styles.predictionContent}>
@@ -751,9 +803,23 @@ export default function GameScreen({ route, navigation }) {
           </TouchableOpacity>
         </View>
 
+        {/* Compact tip between buttons & Telegram — no card, no extra scroll */}
+        {isActivated && !isTcLotteryGame(game.title) ? (
+          <View style={styles.connectionHint}>
+            <Text style={styles.connectionHintTitle}>⚠️ Incorrect Predictions</Text>
+            <Text style={[styles.connectionHintBody, { color: theme.colors.textSecondary }]}>
+              If you are receiving incorrect predictions, it may be because your Hacking app is not properly connected to your game.
+            </Text>
+            <Text style={[styles.connectionHintSub, { color: theme.colors.textSecondary }]}>
+              📩{' '}
+              <Text style={styles.connectionHintLink} onPress={openAdminTelegram}>
+                Contact Admin
+              </Text>
+              {' '}to Fix Your Predictions.
+            </Text>
+          </View>
+        ) : null}
 
-
-        {/* Bottom spacing for telegram section */}
         <View style={styles.bottomSpacing} />
       </ScrollView>
 
@@ -817,6 +883,26 @@ export default function GameScreen({ route, navigation }) {
         </View>
       </Modal>
 
+      {/* Access gate — not activated / pending admin approval */}
+      <PredictionAccessModal
+        visible={accessModal.visible}
+        variant={accessModal.variant}
+        onClose={closeAccessModal}
+        onContactAdmin={() => {
+          closeAccessModal();
+          openAdminTelegram();
+        }}
+        onPrimaryAction={() => {
+          const variant = accessModal.variant;
+          closeAccessModal();
+          if (variant === 'pending') {
+            openAdminTelegram();
+          } else {
+            setShowActivationModal(true);
+          }
+        }}
+      />
+
       {/* Custom Alert */}
       <CustomAlert
         visible={customAlert.visible}
@@ -853,7 +939,7 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: getSpacing(20),
     paddingTop: getSpacing(20),
-    paddingBottom: getSpacing(80), // Reduced space for telegram section
+    paddingBottom: getSpacing(80), // space for fixed telegram footer
   },
   gameSubtitle: {
     fontSize: getFontSize(24),
@@ -875,6 +961,35 @@ const styles = StyleSheet.create({
     paddingHorizontal: getSpacing(20),
     paddingBottom: getSpacing(20),
     marginTop: getSpacing(30),
+  },
+  connectionHint: {
+    width: '100%',
+    paddingHorizontal: getSpacing(8),
+    marginTop: getSpacing(4),
+    marginBottom: getSpacing(6),
+  },
+  connectionHintTitle: {
+    fontSize: getFontSize(13),
+    fontWeight: '700',
+    color: '#FACC15',
+    textAlign: 'center',
+    marginBottom: getSpacing(4),
+  },
+  connectionHintBody: {
+    fontSize: getFontSize(12),
+    lineHeight: getFontSize(17),
+    textAlign: 'center',
+    marginBottom: getSpacing(6),
+  },
+  connectionHintSub: {
+    fontSize: getFontSize(12),
+    lineHeight: getFontSize(17),
+    textAlign: 'center',
+  },
+  connectionHintLink: {
+    color: '#38BDF8',
+    fontWeight: '800',
+    textDecorationLine: 'underline',
   },
   actionButton: {
     flexDirection: 'row',

@@ -46,6 +46,7 @@ export default function AdminPanelScreen({ navigation }) {
 
   const [showTelegramModal, setShowTelegramModal] = useState(false);
   const [telegramUrl, setTelegramUrl] = useState('');
+  const [telegramAdminId, setTelegramAdminId] = useState('');
   const [updatingTelegram, setUpdatingTelegram] = useState(false);
 
   const handleOpenTelegramModal = async () => {
@@ -56,16 +57,15 @@ export default function AdminPanelScreen({ navigation }) {
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
         const data = docSnap.data();
-        if (data && data.url) {
-          setTelegramUrl(data.url);
-        } else {
-          setTelegramUrl('https://t.me/Aviator_Predictor_V5');
-        }
+        setTelegramUrl(data?.url || 'https://t.me/Aviator_Predictor_V5');
+        setTelegramAdminId(data?.adminId || '');
       } else {
         setTelegramUrl('https://t.me/Aviator_Predictor_V5');
+        setTelegramAdminId('');
       }
     } catch (error) {
       setTelegramUrl('https://t.me/Aviator_Predictor_V5');
+      setTelegramAdminId('');
     } finally {
       setLoading(false);
     }
@@ -73,7 +73,7 @@ export default function AdminPanelScreen({ navigation }) {
 
   const handleSaveTelegramLink = async () => {
     if (!telegramUrl.trim()) {
-      Alert.alert('Error', 'Please enter a valid Telegram link');
+      Alert.alert('Error', 'Please enter a valid Telegram channel link');
       return;
     }
     setUpdatingTelegram(true);
@@ -81,13 +81,14 @@ export default function AdminPanelScreen({ navigation }) {
       const docRef = doc(db, 'settings', 'telegram');
       await setDoc(docRef, {
         url: telegramUrl.trim(),
+        adminId: telegramAdminId.trim().replace(/^@/, ''),
         updatedAt: new Date(),
       }, { merge: true });
-      Alert.alert('Success', 'Telegram link updated successfully!');
+      Alert.alert('Success', 'Telegram channel & admin ID updated!');
       setShowTelegramModal(false);
     } catch (e) {
       console.error(e);
-      Alert.alert('Error', 'Failed to update Telegram link');
+      Alert.alert('Error', 'Failed to update Telegram settings');
     } finally {
       setUpdatingTelegram(false);
     }
@@ -184,21 +185,37 @@ export default function AdminPanelScreen({ navigation }) {
       >
         <View style={[styles.modalOverlay, { backgroundColor: 'rgba(0, 0, 0, 0.5)' }]}>
           <View style={[styles.modalContent, { backgroundColor: theme.colors.surface }]}>
-            <Text style={[styles.modalTitle, { color: theme.colors.text }]}>📢 Telegram Link</Text>
+            <Text style={[styles.modalTitle, { color: theme.colors.text }]}>📢 Telegram Settings</Text>
             <Text style={[styles.modalSubtitle, { color: theme.colors.textSecondary }]}>
-              Update the global Telegram channel or support link for the entire app.
+              Channel link for footer · Admin ID for Contact Admin (personal chat)
             </Text>
-            
+
+            <Text style={[styles.modalFieldLabel, { color: theme.colors.text }]}>Channel Link</Text>
             <TextInput
               style={[styles.modalInput, { 
                 backgroundColor: theme.colors.background, 
                 color: theme.colors.text,
                 borderColor: theme.colors.border 
               }]}
-              placeholder="Enter Telegram URL"
+              placeholder="https://t.me/your_channel"
               placeholderTextColor={theme.colors.textSecondary}
               value={telegramUrl}
               onChangeText={setTelegramUrl}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+
+            <Text style={[styles.modalFieldLabel, { color: theme.colors.text }]}>Admin Telegram ID</Text>
+            <TextInput
+              style={[styles.modalInput, { 
+                backgroundColor: theme.colors.background, 
+                color: theme.colors.text,
+                borderColor: theme.colors.border 
+              }]}
+              placeholder="@admin_username"
+              placeholderTextColor={theme.colors.textSecondary}
+              value={telegramAdminId}
+              onChangeText={setTelegramAdminId}
               autoCapitalize="none"
               autoCorrect={false}
             />
@@ -317,5 +334,68 @@ const styles = StyleSheet.create({
   },
   buttonDisabled: {
     backgroundColor: '#ccc',
+  },
+  modalOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalContent: {
+    width: '100%',
+    borderRadius: 16,
+    padding: 24,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  modalSubtitle: {
+    fontSize: 14,
+    marginBottom: 16,
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  modalFieldLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 6,
+  },
+  modalInput: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 16,
+    marginBottom: 14,
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    marginTop: 8,
+  },
+  modalButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelButton: {
+    borderWidth: 1,
+    marginRight: 8,
+  },
+  confirmButton: {
+    marginLeft: 8,
+  },
+  cancelButtonText: {
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  confirmButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
   },
 }); 

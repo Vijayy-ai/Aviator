@@ -1,5 +1,6 @@
-import { collection, addDoc } from 'firebase/firestore';
+import { collection, addDoc, getDocs } from 'firebase/firestore';
 import { db } from '../config/firebase';
+import { isTcLotteryGame } from './tcLottery';
 
 const games = [
   {
@@ -411,8 +412,20 @@ const games = [
 
 export const addAllGames = async () => {
   try {
+    const existingSnap = await getDocs(collection(db, 'games'));
+    const existingTitles = new Set(
+      existingSnap.docs.map((d) => String(d.data().title || '').trim().toLowerCase())
+    );
+    const hasTcLottery = [...existingTitles].some((t) => isTcLotteryGame(t));
+
     for (const game of games) {
+      const titleKey = String(game.title || '').trim().toLowerCase();
+      // Skip exact title matches; also skip Tc Lottery if any Aviator/Tc Lottery already exists
+      if (existingTitles.has(titleKey)) continue;
+      if (isTcLotteryGame(game.title) && hasTcLottery) continue;
+
       await addDoc(collection(db, 'games'), game);
+      existingTitles.add(titleKey);
     }
   } catch (error) {
     console.error('Error adding games:', error);

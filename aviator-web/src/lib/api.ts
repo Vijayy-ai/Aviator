@@ -1,4 +1,4 @@
-const PRODUCTION_API = "https://aviator-fcon.onrender.com";
+const PRODUCTION_API = "https://atorm.duckdns.org";
 
 function isPrivateLanHost(host: string) {
   return (
@@ -553,4 +553,77 @@ export async function fetchGameHistory() {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error("Failed to fetch game history");
   return (data.bets || []) as GameHistoryResponse[];
+}
+
+export type SupportChat = {
+  id: number;
+  status: "OPEN" | "CLOSED";
+  last_message: string;
+  last_sender: string;
+  last_message_at: string | null;
+  unread_for_admin: number;
+  unread_for_user: number;
+  created_at: string;
+  updated_at: string;
+  username?: string;
+  public_uid?: string;
+  email?: string;
+};
+
+export type SupportMessage = {
+  id: number;
+  sender: "user" | "admin";
+  text: string;
+  created_at: string;
+};
+
+export async function fetchMySupportChat(afterId?: number) {
+  const headers = await authHeaders();
+  const q = afterId ? `?after_id=${afterId}` : "";
+  const res = await fetch(`${API_BASE_URL}/api/support/chat/${q}`, { headers });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(typeof data?.detail === "string" ? data.detail : "Failed to load support chat");
+  return data as { chat: SupportChat; messages: SupportMessage[] };
+}
+
+export async function sendSupportMessage(text: string) {
+  const headers = await authHeaders();
+  const res = await fetch(`${API_BASE_URL}/api/support/chat/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...headers },
+    body: JSON.stringify({ text }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(typeof data?.detail === "string" ? data.detail : "Failed to send message");
+  return data as { chat: SupportChat; message: SupportMessage };
+}
+
+export async function fetchAdminSupportChats(status?: string) {
+  const headers = adminHeaders();
+  const q = status ? `?status=${encodeURIComponent(status)}` : "";
+  const res = await fetch(`${API_BASE_URL}/api/admin/support/chats/${q}`, { headers });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(typeof data?.detail === "string" ? data.detail : "Failed to load support chats");
+  return data as { chats: SupportChat[]; unread_total: number };
+}
+
+export async function fetchAdminSupportChat(chatId: number, afterId?: number) {
+  const headers = adminHeaders();
+  const q = afterId ? `?after_id=${afterId}` : "";
+  const res = await fetch(`${API_BASE_URL}/api/admin/support/chats/${chatId}/${q}`, { headers });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(typeof data?.detail === "string" ? data.detail : "Failed to load chat");
+  return data as { chat: SupportChat; messages: SupportMessage[] };
+}
+
+export async function sendAdminSupportMessage(chatId: number, text: string) {
+  const headers = adminHeaders();
+  const res = await fetch(`${API_BASE_URL}/api/admin/support/chats/${chatId}/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...headers },
+    body: JSON.stringify({ text }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(typeof data?.detail === "string" ? data.detail : "Failed to send reply");
+  return data as { chat: SupportChat; message: SupportMessage };
 }

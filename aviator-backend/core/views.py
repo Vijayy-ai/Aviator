@@ -35,6 +35,8 @@ from .models import (
     GiftClaim,
     GiftCode,
     SiteSettings,
+    SupportChat,
+    SupportMessage,
     UserProfile,
     Transaction,
     WithdrawRequest,
@@ -54,6 +56,9 @@ from .serializers import (
     LoginRequestSerializer,
     PlaceBetSerializer,
     SiteSettingsSerializer,
+    SupportChatSerializer,
+    SupportMessageCreateSerializer,
+    SupportMessageSerializer,
     UpdateUsernameSerializer,
     UserProfileSerializer,
     TransactionSerializer,
@@ -683,6 +688,174 @@ class AdminSettingsView(APIView):
             return Response({"detail": "Invalid amount."}, status=status.HTTP_400_BAD_REQUEST)
         limits.save(update_fields=["min_deposit", "min_withdraw", "updated_at"])
         return Response(SiteSettingsSerializer(limits).data)
+
+
+def _append_support_message(*, chat: SupportChat, sender: str, text: str) -> SupportMessage:
+    now = timezone.now()
+    preview = text if len(text) <= 500 else f"{text[:497]}..."
+    msg = SupportMessage.objects.create(chat=chat, sender=sender, text=text)
+    chat.last_message = preview
+    chat.last_sender = sender
+    chat.last_message_at = now
+    chat.status = SupportChat.Status.OPEN
+    if sender == SupportMessage.Sender.USER:
+        chat.unread_for_admin = (chat.unread_for_admin or 0) + 1
+        chat.unread_for_user = 0
+    else:
+        chat.unread_for_user = (chat.unread_for_user or 0) + 1
+        chat.unread_for_admin = 0
+    chat.save(
+        update_fields=[
+            "last_message",
+            "last_sender",
+            "last_message_at",
+            "status",
+            "unread_for_admin",
+            "unread_for_user",
+            "updated_at",
+        ]
+    )
+    return msg
+
+
+def _support_messages_qs(chat: SupportChat, after_id=None):
+    qs = chat.messages.all().order_by("id")
+    if after_id and after_id > 0:
+        qs = qs.filter(id__gt=after_id)
+    return qs
+
+
+class SupportChatView(APIView):
+    """Customer: get-or-create own chat + list messages (incremental via ?after_id=)."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        chat, _ = SupportChat.objects.get_or_create(user=request.user)
+        after_raw = request.query_params.get("after_id")
+        after_id = None
+        if after_raw is not None and str(after_raw).strip() != "":
+            try:
+                after_id = int(after_raw)
+            except (TypeError, ValueError):
+                return Response({"detail": "Invalid after_id."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if after_id:
+            messages = _support_messages_qs(chat, after_id)
+        else:
+            # Full history — keep last 200 for performance
+            messages = list(chat.messages.order_by("-id")[:200])
+            messages.reverse()
+
+        if chat.unread_for_user:
+            SupportChat.objects.filter(pk=chat.pk, unread_for_user__gt=0).update(unread_for_user=0)
+            chat.unread_for_user = 0
+
+        return Response(
+            {
+                "chat": SupportChatSerializer(chat).data,
+                "messages": SupportMessageSerializer(messages, many=True).data,
+            }
+        )
+
+    def post(self, request):
+        ser = SupportMessageCreateSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        text = ser.validated_data["text"]
+        chat, _ = SupportChat.objects.get_or_create(user=request.user)
+        msg = _append_support_message(chat=chat, sender=SupportMessage.Sender.USER, text=text)
+        return Response(
+            {
+                "chat": SupportChatSerializer(chat).data,
+                "message": SupportMessageSerializer(msg).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class AdminSupportChatListView(APIView):
+    authentication_classes = []
+    permission_classes = [IsPanelAdmin]
+
+    def get(self, request):
+        status_filter = (request.query_params.get("status") or "").strip().upper()
+        qs = SupportChat.objects.select_related("user", "user__profile").order_by(
+            "-last_message_at",
+            "-updated_at",
+        )
+        if status_filter in {c.value for c in SupportChat.Status}:
+            qs = qs.filter(status=status_filter)
+        chats = list(qs[:200])
+        unread_total = sum(c.unread_for_admin or 0 for c in chats)
+        return Response(
+            {
+                "chats": SupportChatSerializer(chats, many=True).data,
+                "unread_total": unread_total,
+            }
+        )
+
+
+class AdminSupportChatDetailView(APIView):
+    authentication_classes = []
+    permission_classes = [IsPanelAdmin]
+
+    def get(self, request, pk: int):
+        chat = (
+            SupportChat.objects.select_related("user", "user__profile")
+            .filter(pk=pk)
+            .first()
+        )
+        if chat is None:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        after_raw = request.query_params.get("after_id")
+        after_id = None
+        if after_raw is not None and str(after_raw).strip() != "":
+            try:
+                after_id = int(after_raw)
+            except (TypeError, ValueError):
+                return Response({"detail": "Invalid after_id."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if after_id:
+            messages = _support_messages_qs(chat, after_id)
+        else:
+            messages = list(chat.messages.order_by("-id")[:200])
+            messages.reverse()
+
+        if chat.unread_for_admin:
+            SupportChat.objects.filter(pk=chat.pk, unread_for_admin__gt=0).update(unread_for_admin=0)
+            chat.unread_for_admin = 0
+
+        return Response(
+            {
+                "chat": SupportChatSerializer(chat).data,
+                "messages": SupportMessageSerializer(messages, many=True).data,
+            }
+        )
+
+    def post(self, request, pk: int):
+        chat = (
+            SupportChat.objects.select_related("user", "user__profile")
+            .filter(pk=pk)
+            .first()
+        )
+        if chat is None:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        ser = SupportMessageCreateSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        msg = _append_support_message(
+            chat=chat,
+            sender=SupportMessage.Sender.ADMIN,
+            text=ser.validated_data["text"],
+        )
+        return Response(
+            {
+                "chat": SupportChatSerializer(chat).data,
+                "message": SupportMessageSerializer(msg).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class TransactionHistoryView(APIView):

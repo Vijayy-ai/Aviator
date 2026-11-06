@@ -21,6 +21,7 @@ import { getFontSize, getSpacing, getButtonHeight } from '../../utils/responsive
 export default function SettingsScreen() {
   const { theme } = useTheme();
   const [telegramUrl, setTelegramUrl] = useState('');
+  const [telegramAdminId, setTelegramAdminId] = useState('');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -42,17 +43,16 @@ export default function SettingsScreen() {
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
         const data = docSnap.data();
-        if (data && data.url) {
-          setTelegramUrl(data.url);
-        } else {
-          setTelegramUrl('https://t.me/Aviator_Predictor_V5');
-        }
+        setTelegramUrl(data?.url || 'https://t.me/Aviator_Predictor_V5');
+        setTelegramAdminId(data?.adminId || '');
       } else {
         setTelegramUrl('https://t.me/Aviator_Predictor_V5');
+        setTelegramAdminId('');
       }
     } catch (error) {
       console.error('Error fetching settings:', error);
       setTelegramUrl('https://t.me/Aviator_Predictor_V5');
+      setTelegramAdminId('');
     } finally {
       setLoading(false);
     }
@@ -60,7 +60,7 @@ export default function SettingsScreen() {
 
   const handleSaveSettings = async () => {
     if (!telegramUrl.trim()) {
-      Alert.alert('Validation Error', 'Please enter a valid Telegram URL');
+      Alert.alert('Validation Error', 'Please enter a valid Telegram channel URL');
       return;
     }
 
@@ -69,9 +69,10 @@ export default function SettingsScreen() {
       const docRef = doc(db, 'settings', 'telegram');
       await setDoc(docRef, {
         url: telegramUrl.trim(),
+        adminId: telegramAdminId.trim().replace(/^@/, ''),
         updatedAt: new Date(),
       }, { merge: true });
-      Alert.alert('Success 🎉', 'Global Telegram link updated successfully across all screens!');
+      Alert.alert('Success 🎉', 'Telegram channel & admin ID updated successfully!');
     } catch (error) {
       console.error('Error saving settings:', error);
       Alert.alert('Error', 'Failed to save settings. Please try again.');
@@ -144,31 +145,52 @@ export default function SettingsScreen() {
           <View style={styles.content}>
 
 
-            {/* Telegram Link Setting Card */}
+            {/* Telegram Channel + Admin ID */}
             <View style={[styles.card, { backgroundColor: theme.colors.card, shadowColor: theme.colors.cardShadow }]}>
               <View style={styles.cardHeader}>
                 <View style={[styles.iconContainer, { backgroundColor: 'rgba(0, 136, 204, 0.1)' }]}>
                   <Ionicons name="paper-plane" size={24} color="#0088cc" />
                 </View>
                 <View style={styles.cardHeaderText}>
-                  <Text style={[styles.cardTitle, { color: theme.colors.text }]}>Telegram Channel Link</Text>
+                  <Text style={[styles.cardTitle, { color: theme.colors.text }]}>Telegram Settings</Text>
                   <Text style={[styles.cardSubtitle, { color: theme.colors.textSecondary }]}>
-                    Used for support redirect and footer links
+                    Channel for footer · Admin ID for Contact Admin
                   </Text>
                 </View>
               </View>
 
               <View style={styles.inputContainer}>
+                <Text style={[styles.fieldLabel, { color: theme.colors.text }]}>Channel Link</Text>
                 <TextInput
                   style={[styles.input, { 
                     backgroundColor: theme.colors.background, 
                     color: theme.colors.text,
                     borderColor: theme.colors.border
                   }]}
-                  placeholder="Enter Telegram URL"
+                  placeholder="https://t.me/your_channel"
                   placeholderTextColor={theme.colors.textSecondary}
                   value={telegramUrl}
                   onChangeText={setTelegramUrl}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+
+                <Text style={[styles.fieldLabel, { color: theme.colors.text, marginTop: getSpacing(16) }]}>
+                  Admin Telegram ID
+                </Text>
+                <Text style={[styles.fieldHint, { color: theme.colors.textSecondary }]}>
+                  Username only (e.g. admin_support) — opens personal chat on Contact Admin
+                </Text>
+                <TextInput
+                  style={[styles.input, { 
+                    backgroundColor: theme.colors.background, 
+                    color: theme.colors.text,
+                    borderColor: theme.colors.border
+                  }]}
+                  placeholder="@admin_username"
+                  placeholderTextColor={theme.colors.textSecondary}
+                  value={telegramAdminId}
+                  onChangeText={setTelegramAdminId}
                   autoCapitalize="none"
                   autoCorrect={false}
                 />
@@ -376,6 +398,16 @@ const styles = StyleSheet.create({
   },
   inputContainer: {
     marginBottom: getSpacing(20),
+  },
+  fieldLabel: {
+    fontSize: getFontSize(14),
+    fontWeight: '600',
+    marginBottom: getSpacing(6),
+  },
+  fieldHint: {
+    fontSize: getFontSize(12),
+    marginBottom: getSpacing(8),
+    lineHeight: getFontSize(16),
   },
   input: {
     paddingHorizontal: getSpacing(16),

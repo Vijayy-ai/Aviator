@@ -12,7 +12,7 @@ import {
   TextInput,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { collection, getDocs, query, orderBy, addDoc, doc, updateDoc } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy, addDoc, doc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
 import { ADMIN_EMAIL, ADMIN_EMAILS } from '../config/constants';
 import { addAllGames } from '../utils/addGames';
@@ -119,9 +119,9 @@ export default function HomeScreen({ navigation }) {
         });
       }
 
-      // Auto-create Tc Lottery game if it is missing
-      const hasTcLottery = gamesData.some((game) => isTcLotteryGame(game.title));
-      if (!hasTcLottery) {
+      // Keep exactly one Tc Lottery / legacy Aviator entry (dedupe + auto-create)
+      const tcLotteryGames = gamesData.filter((game) => isTcLotteryGame(game.title));
+      if (tcLotteryGames.length === 0) {
         try {
           const newTcLotteryGame = {
             title: TC_LOTTERY_TITLE,
@@ -140,6 +140,34 @@ export default function HomeScreen({ navigation }) {
         } catch (createErr) {
           console.error('Failed to auto-create Tc Lottery game:', createErr);
         }
+      } else if (tcLotteryGames.length > 1) {
+        // Prefer pinned, then newest createdAt
+        const keep = [...tcLotteryGames].sort((a, b) => {
+          if (a.isPinned && !b.isPinned) return -1;
+          if (!a.isPinned && b.isPinned) return 1;
+          const aTime = a.createdAt?.toMillis?.() ?? (a.createdAt instanceof Date ? a.createdAt.getTime() : 0);
+          const bTime = b.createdAt?.toMillis?.() ?? (b.createdAt instanceof Date ? b.createdAt.getTime() : 0);
+          return bTime - aTime;
+        })[0];
+
+        const duplicates = tcLotteryGames.filter((g) => g.id !== keep.id);
+        gamesData = gamesData.filter((g) => !duplicates.some((d) => d.id === g.id));
+
+        // Ensure kept entry uses canonical title
+        if (keep.title !== TC_LOTTERY_TITLE) {
+          updateDoc(doc(db, 'games', keep.id), {
+            title: TC_LOTTERY_TITLE,
+            updatedAt: new Date(),
+          }).catch(() => {});
+          const keptIdx = gamesData.findIndex((g) => g.id === keep.id);
+          if (keptIdx >= 0) {
+            gamesData[keptIdx] = { ...gamesData[keptIdx], title: TC_LOTTERY_TITLE };
+          }
+        }
+
+        Promise.all(
+          duplicates.map((g) => deleteDoc(doc(db, 'games', g.id)).catch(() => {}))
+        ).then(() => {});
       }
 
       // Fix broken Uploadcare transform URLs in Firestore + local list

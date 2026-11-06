@@ -1,5 +1,5 @@
-const PRODUCTION_WS = "wss://aviator-fcon.onrender.com/ws/game/";
-const PRODUCTION_PREVIEW_WS = "wss://aviator-fcon.onrender.com/ws/game-preview/";
+const PRODUCTION_WS = "wss://atorm.duckdns.org/ws/game/";
+const PRODUCTION_PREVIEW_WS = "wss://atorm.duckdns.org/ws/game-preview/";
 
 function isPrivateLanHost(host: string) {
   return (

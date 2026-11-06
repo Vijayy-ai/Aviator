@@ -332,8 +332,30 @@ export default function CodeGeneratorScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              await deleteDoc(doc(db, 'codes', codeId));
+              // Clear all user activations / pending requests tied to this code
+              // so the game UI shows "Activate Hack" again instead of "Already Applied".
+              const activatedQuery = query(
+                collection(db, 'activatedGames'),
+                where('codeId', '==', codeId)
+              );
+              const pendingQuery = query(
+                collection(db, 'pendingActivations'),
+                where('codeId', '==', codeId)
+              );
+              const [activatedSnap, pendingSnap] = await Promise.all([
+                getDocs(activatedQuery),
+                getDocs(pendingQuery),
+              ]);
+
+              const cleanupDeletes = [
+                ...activatedSnap.docs.map((d) => deleteDoc(d.ref)),
+                ...pendingSnap.docs.map((d) => deleteDoc(d.ref)),
+                deleteDoc(doc(db, 'codes', codeId)),
+              ];
+              await Promise.all(cleanupDeletes);
+
               fetchCodes();
+              fetchPendingActivations();
               Alert.alert('Success', 'Code deleted successfully!');
             } catch (error) {
               console.error('Error deleting code:', error);

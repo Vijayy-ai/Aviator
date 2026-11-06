@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { BrandLogo } from "@/components/BrandLogo";
 import {
@@ -8,17 +8,22 @@ import {
   adminLogin,
   adminWithdrawAction,
   fetchAdminSettings,
+  fetchAdminSupportChat,
+  fetchAdminSupportChats,
   fetchAdminUsers,
   fetchAdminWithdrawals,
   getAdminToken,
+  sendAdminSupportMessage,
   setAdminToken,
   updateAdminSettings,
   type AdminUserRow,
+  type SupportChat,
+  type SupportMessage,
   type WalletLimits,
   type WithdrawRequest,
 } from "@/lib/api";
 
-type Tab = "withdrawals" | "users" | "settings" | "password";
+type Tab = "withdrawals" | "users" | "support" | "settings" | "password";
 
 function money(v: string | number | undefined) {
   const n = Number(v ?? 0);
@@ -66,6 +71,15 @@ export default function HiddenAdminPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  const [supportChats, setSupportChats] = useState<SupportChat[]>([]);
+  const [supportUnread, setSupportUnread] = useState(0);
+  const [activeChatId, setActiveChatId] = useState<number | null>(null);
+  const [supportMessages, setSupportMessages] = useState<SupportMessage[]>([]);
+  const [supportDraft, setSupportDraft] = useState("");
+  const [supportSending, setSupportSending] = useState(false);
+  const [supportLoading, setSupportLoading] = useState(false);
+  const supportLastIdRef = useRef(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -198,11 +212,111 @@ export default function HiddenAdminPage() {
     }
   }
 
+  const loadSupportChats = useCallback(async () => {
+    try {
+      const data = await fetchAdminSupportChats();
+      setSupportChats(data.chats);
+      setSupportUnread(data.unread_total || 0);
+    } catch (e) {
+      if (tab === "support") setError(friendlyError(e));
+    }
+  }, [tab]);
+
+  const loadSupportThread = useCallback(async (chatId: number, incremental: boolean) => {
+    try {
+      const afterId = incremental && supportLastIdRef.current > 0 ? supportLastIdRef.current : undefined;
+      const data = await fetchAdminSupportChat(chatId, afterId);
+      if (incremental) {
+        if (data.messages.length) {
+          setSupportMessages((prev) => {
+            const seen = new Set(prev.map((m) => m.id));
+            const next = [...prev];
+            for (const m of data.messages) {
+              if (!seen.has(m.id)) next.push(m);
+            }
+            next.sort((a, b) => a.id - b.id);
+            supportLastIdRef.current = next.length ? next[next.length - 1]!.id : 0;
+            return next;
+          });
+        }
+      } else {
+        setSupportMessages(data.messages);
+        supportLastIdRef.current = data.messages.length
+          ? data.messages[data.messages.length - 1]!.id
+          : 0;
+      }
+      setSupportChats((prev) => {
+        const next = prev.map((c) =>
+          c.id === chatId ? { ...data.chat, unread_for_admin: 0 } : c,
+        );
+        setSupportUnread(next.reduce((sum, c) => sum + (c.unread_for_admin || 0), 0));
+        return next;
+      });
+    } catch (e) {
+      setError(friendlyError(e));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!authed || tab !== "support") return;
+    setSupportLoading(true);
+    void loadSupportChats().finally(() => setSupportLoading(false));
+    const listTimer = window.setInterval(() => {
+      void loadSupportChats();
+    }, 4000);
+    return () => window.clearInterval(listTimer);
+  }, [authed, tab, loadSupportChats]);
+
+  useEffect(() => {
+    if (!authed || tab !== "support" || activeChatId == null) return;
+    supportLastIdRef.current = 0;
+    void loadSupportThread(activeChatId, false);
+    const threadTimer = window.setInterval(() => {
+      void loadSupportThread(activeChatId, true);
+    }, 2500);
+    return () => window.clearInterval(threadTimer);
+  }, [authed, tab, activeChatId, loadSupportThread]);
+
+  async function onSupportSend(e: React.FormEvent) {
+    e.preventDefault();
+    if (activeChatId == null) return;
+    const text = supportDraft.trim();
+    if (!text || supportSending) return;
+    try {
+      setSupportSending(true);
+      setError(null);
+      const res = await sendAdminSupportMessage(activeChatId, text);
+      setSupportDraft("");
+      setSupportMessages((prev) => {
+        if (prev.some((m) => m.id === res.message.id)) return prev;
+        const next = [...prev, res.message];
+        supportLastIdRef.current = res.message.id;
+        return next;
+      });
+      setSupportChats((prev) =>
+        prev
+          .map((c) => (c.id === activeChatId ? res.chat : c))
+          .sort((a, b) => {
+            const at = a.last_message_at ? new Date(a.last_message_at).getTime() : 0;
+            const bt = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
+            return bt - at;
+          }),
+      );
+    } catch (err) {
+      setError(friendlyError(err));
+    } finally {
+      setSupportSending(false);
+    }
+  }
+
   function logout() {
     setAdminToken(null);
     setAuthed(false);
     setRequests([]);
     setUsers([]);
+    setSupportChats([]);
+    setSupportMessages([]);
+    setActiveChatId(null);
     setNotice(null);
     setError(null);
   }
@@ -306,6 +420,7 @@ export default function HiddenAdminPage() {
             [
               ["withdrawals", "Withdraw requests"],
               ["users", "Users & wallets"],
+              ["support", "Support chats"],
               ["settings", "Min limits"],
               ["password", "Change password"],
             ] as const
@@ -325,6 +440,11 @@ export default function HiddenAdminPage() {
               }`}
             >
               {label}
+              {id === "support" && supportUnread > 0 ? (
+                <span className="ml-2 rounded-full bg-white px-1.5 py-0.5 text-[10px] font-extrabold text-rose-600">
+                  {supportUnread}
+                </span>
+              ) : null}
             </button>
           ))}
         </div>
@@ -467,6 +587,154 @@ export default function HiddenAdminPage() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          </section>
+        ) : null}
+
+        {tab === "support" ? (
+          <section className="overflow-hidden rounded-3xl border border-white/10 bg-[#171a21]">
+            <div className="grid min-h-[70vh] lg:grid-cols-[320px_1fr]">
+              <aside className="border-b border-white/10 lg:border-b-0 lg:border-r lg:border-white/10">
+                <div className="flex items-center justify-between border-b border-white/5 px-4 py-3">
+                  <h2 className="text-sm font-extrabold text-white">All chats</h2>
+                  <button
+                    type="button"
+                    onClick={() => void loadSupportChats()}
+                    className="text-xs font-bold text-zinc-400 hover:text-white"
+                  >
+                    Refresh
+                  </button>
+                </div>
+                {supportLoading && supportChats.length === 0 ? (
+                  <div className="p-6 text-center text-sm font-semibold text-zinc-500">Loading chats…</div>
+                ) : null}
+                {!supportLoading && supportChats.length === 0 ? (
+                  <div className="p-6 text-center text-sm font-semibold text-zinc-500">
+                    No customer chats yet.
+                  </div>
+                ) : null}
+                <div className="max-h-[40vh] overflow-y-auto lg:max-h-[calc(70vh-48px)]">
+                  {supportChats.map((c) => {
+                    const active = c.id === activeChatId;
+                    return (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => {
+                          setActiveChatId(c.id);
+                          setSupportMessages([]);
+                          setError(null);
+                        }}
+                        className={`block w-full border-b border-white/5 px-4 py-3 text-left transition ${
+                          active ? "bg-rose-500/15" : "hover:bg-white/5"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-extrabold text-white">
+                              {c.username || "User"}
+                              {c.public_uid ? (
+                                <span className="ml-1 font-semibold text-zinc-500">#{c.public_uid}</span>
+                              ) : null}
+                            </div>
+                            <div className="mt-0.5 truncate text-xs font-medium text-zinc-400">
+                              {c.last_message || "No messages yet"}
+                            </div>
+                          </div>
+                          {c.unread_for_admin > 0 ? (
+                            <span className="shrink-0 rounded-full bg-rose-500 px-2 py-0.5 text-[10px] font-extrabold text-white">
+                              {c.unread_for_admin}
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="mt-1 text-[10px] font-semibold text-zinc-600">
+                          {c.last_message_at ? new Date(c.last_message_at).toLocaleString() : "—"}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </aside>
+
+              <div className="flex min-h-[50vh] flex-col">
+                {activeChatId == null ? (
+                  <div className="flex flex-1 items-center justify-center p-8 text-sm font-semibold text-zinc-500">
+                    Select a chat to reply
+                  </div>
+                ) : (
+                  <>
+                    <div className="border-b border-white/5 px-4 py-3">
+                      {(() => {
+                        const c = supportChats.find((x) => x.id === activeChatId);
+                        return (
+                          <div>
+                            <div className="text-sm font-extrabold text-white">
+                              {c?.username || "User"}
+                              {c?.public_uid ? (
+                                <span className="ml-1 font-semibold text-zinc-500">#{c.public_uid}</span>
+                              ) : null}
+                            </div>
+                            <div className="text-xs font-medium text-zinc-500">{c?.email || ""}</div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                    <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4">
+                      {supportMessages.length === 0 ? (
+                        <div className="py-8 text-center text-sm font-semibold text-zinc-500">
+                          No messages in this chat yet.
+                        </div>
+                      ) : null}
+                      {supportMessages.map((m) => {
+                        const mine = m.sender === "admin";
+                        return (
+                          <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+                            <div
+                              className={`max-w-[75%] rounded-2xl px-3.5 py-2.5 text-sm font-medium ${
+                                mine
+                                  ? "rounded-br-md bg-rose-500 text-white"
+                                  : "rounded-bl-md bg-[#0f1115] text-zinc-200 ring-1 ring-white/10"
+                              }`}
+                            >
+                              {!mine ? (
+                                <div className="mb-1 text-[10px] font-bold uppercase tracking-wide text-zinc-500">
+                                  Customer
+                                </div>
+                              ) : null}
+                              <div className="whitespace-pre-wrap break-words">{m.text}</div>
+                              <div
+                                className={`mt-1 text-[10px] font-semibold ${
+                                  mine ? "text-white/70" : "text-zinc-500"
+                                }`}
+                              >
+                                {new Date(m.created_at).toLocaleString()}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <form onSubmit={onSupportSend} className="border-t border-white/5 p-3">
+                      <div className="flex gap-2">
+                        <input
+                          value={supportDraft}
+                          onChange={(e) => setSupportDraft(e.target.value)}
+                          placeholder="Reply as support…"
+                          maxLength={2000}
+                          className="flex-1 rounded-xl border border-white/10 bg-[#0f1115] px-4 py-3 text-sm font-semibold text-white outline-none focus:border-rose-500/60"
+                        />
+                        <button
+                          type="submit"
+                          disabled={supportSending || !supportDraft.trim()}
+                          className="rounded-xl bg-rose-500 px-4 py-3 text-sm font-extrabold text-white hover:bg-rose-400 disabled:opacity-50"
+                        >
+                          {supportSending ? "…" : "Send"}
+                        </button>
+                      </div>
+                    </form>
+                  </>
+                )}
+              </div>
             </div>
           </section>
         ) : null}

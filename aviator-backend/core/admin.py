@@ -1,7 +1,15 @@
 from django.contrib import admin
 
-from .models import DepositOrder, DepositPayment, SiteSettings, Transaction, UserProfile, WithdrawRequest
-
+from .models import (
+    DepositOrder,
+    DepositPayment,
+    SiteSettings,
+    SupportChat,
+    SupportMessage,
+    Transaction,
+    UserProfile,
+    WithdrawRequest,
+)
 
 @admin.register(UserProfile)
 class UserProfileAdmin(admin.ModelAdmin):
@@ -49,3 +57,17 @@ class WithdrawRequestAdmin(admin.ModelAdmin):
 @admin.register(SiteSettings)
 class SiteSettingsAdmin(admin.ModelAdmin):
     list_display = ("id", "min_deposit", "min_withdraw", "updated_at")
+
+
+@admin.register(SupportChat)
+class SupportChatAdmin(admin.ModelAdmin):
+    list_display = ("id", "user", "status", "last_sender", "unread_for_admin", "last_message_at")
+    list_filter = ("status",)
+    search_fields = ("user__username", "user__email", "last_message")
+
+
+@admin.register(SupportMessage)
+class SupportMessageAdmin(admin.ModelAdmin):
+    list_display = ("id", "chat", "sender", "created_at")
+    list_filter = ("sender",)
+    search_fields = ("text",)

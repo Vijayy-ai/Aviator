@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import Bet, SiteSettings, UserProfile, Transaction, WithdrawRequest
+from .models import Bet, SiteSettings, SupportChat, SupportMessage, UserProfile, Transaction, WithdrawRequest
 
 
 class LoginRequestSerializer(serializers.Serializer):
@@ -157,3 +157,53 @@ class AdminUserSerializer(serializers.ModelSerializer):
             "invite_code",
             "created_at",
         ]
+
+
+class SupportMessageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SupportMessage
+        fields = ["id", "sender", "text", "created_at"]
+
+
+class SupportChatSerializer(serializers.ModelSerializer):
+    username = serializers.SerializerMethodField()
+    public_uid = serializers.SerializerMethodField()
+    email = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SupportChat
+        fields = [
+            "id",
+            "status",
+            "last_message",
+            "last_sender",
+            "last_message_at",
+            "unread_for_admin",
+            "unread_for_user",
+            "created_at",
+            "updated_at",
+            "username",
+            "public_uid",
+            "email",
+        ]
+
+    def _profile(self, obj):
+        try:
+            return obj.user.profile
+        except Exception:
+            return None
+
+    def get_username(self, obj):
+        profile = self._profile(obj)
+        return (profile.username if profile else "") or ""
+
+    def get_public_uid(self, obj):
+        profile = self._profile(obj)
+        return (profile.public_uid if profile else "") or ""
+
+    def get_email(self, obj):
+        return getattr(obj.user, "email", "") or ""
+
+
+class SupportMessageCreateSerializer(serializers.Serializer):
+    text = serializers.CharField(min_length=1, max_length=2000, trim_whitespace=True)

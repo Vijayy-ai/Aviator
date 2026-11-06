@@ -254,6 +254,12 @@ export default function AccountPage() {
           <MenuRow icon="🎁" title="Gifts" />
           <MenuRow icon="📊" title="Game statistics" />
           <MenuRow icon="🌐" title="Language" right={<span className="text-sm font-bold text-zinc-600">English</span>} />
+          <MenuRow
+            icon="💬"
+            title="Customer Support"
+            subtitle="Chat with our team"
+            href="/account/support"
+          />
           <button
             type="button"
             onClick={() => {

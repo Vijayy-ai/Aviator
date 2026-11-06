@@ -280,3 +280,48 @@ class WithdrawRequest(models.Model):
 
     def __str__(self) -> str:
         return f"Withdraw {self.amount} ({self.status}) by {self.user_id}"
+
+
+class SupportChat(models.Model):
+    """One support thread per user. Created when the user opens Customer Support."""
+
+    class Status(models.TextChoices):
+        OPEN = "OPEN", "Open"
+        CLOSED = "CLOSED", "Closed"
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="support_chat",
+    )
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.OPEN, db_index=True)
+    last_message = models.CharField(max_length=500, blank=True, default="")
+    last_sender = models.CharField(max_length=8, blank=True, default="")  # user | admin
+    last_message_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    unread_for_admin = models.PositiveIntegerField(default=0)
+    unread_for_user = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-last_message_at", "-updated_at"]
+
+    def __str__(self) -> str:
+        return f"SupportChat #{self.id} user={self.user_id} ({self.status})"
+
+
+class SupportMessage(models.Model):
+    class Sender(models.TextChoices):
+        USER = "user", "User"
+        ADMIN = "admin", "Admin"
+
+    chat = models.ForeignKey(SupportChat, on_delete=models.CASCADE, related_name="messages")
+    sender = models.CharField(max_length=8, choices=Sender.choices)
+    text = models.TextField(max_length=2000)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["id"]
+
+    def __str__(self) -> str:
+        return f"SupportMessage #{self.id} ({self.sender})"
