@@ -323,7 +323,7 @@ export default function HiddenAdminPage() {
 
   if (checking) {
     return (
-      <div className="flex min-h-dvh items-center justify-center bg-[#0f1115] text-sm font-semibold text-zinc-400">
+      <div className="flex h-dvh items-center justify-center overflow-hidden bg-[#0f1115] text-sm font-semibold text-zinc-400">
         Checking admin session…
       </div>
     );
@@ -331,11 +331,11 @@ export default function HiddenAdminPage() {
 
   if (!authed) {
     return (
-      <div className="relative flex min-h-dvh items-center justify-center overflow-hidden bg-[#0f1115] px-4">
+      <div className="relative flex h-dvh items-center justify-center overflow-y-auto bg-[#0f1115] px-4 py-8">
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,_rgba(244,63,94,0.18),_transparent_55%)]" />
         <form
           onSubmit={onLogin}
-          className="relative w-full max-w-md rounded-3xl border border-white/10 bg-[#171a21] p-7 shadow-2xl shadow-black/40"
+          className="relative my-auto w-full max-w-md rounded-3xl border border-white/10 bg-[#171a21] p-7 shadow-2xl shadow-black/40"
         >
           <BrandLogo
             className="flex items-center gap-2"
@@ -378,29 +378,29 @@ export default function HiddenAdminPage() {
   }
 
   return (
-    <div className="min-h-dvh bg-[#0f1115] text-zinc-100">
-      <header className="border-b border-white/10 bg-[#171a21]/80 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-4">
-          <div>
+    <div className="flex h-dvh flex-col overflow-hidden bg-[#0f1115] text-zinc-100">
+      <header className="shrink-0 border-b border-white/10 bg-[#171a21]/95 backdrop-blur">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:py-4">
+          <div className="min-w-0">
             <BrandLogo
               className="mb-1 flex items-center gap-2"
               imgClassName="h-6 w-6 object-contain"
               textClassName="text-[11px] font-bold uppercase tracking-[0.18em] text-rose-400"
             />
-            <h1 className="text-xl font-extrabold tracking-tight text-white">Admin Panel</h1>
+            <h1 className="truncate text-lg font-extrabold tracking-tight text-white sm:text-xl">Admin Panel</h1>
           </div>
           <button
             type="button"
             onClick={logout}
-            className="rounded-full bg-white px-4 py-2 text-sm font-bold text-zinc-900 hover:bg-zinc-200 active:scale-[0.98]"
+            className="shrink-0 rounded-full bg-white px-4 py-2 text-sm font-bold text-zinc-900 hover:bg-zinc-200 active:scale-[0.98]"
           >
             Logout
           </button>
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl px-4 py-6">
-        <div className="mb-5 grid gap-3 sm:grid-cols-3">
+      <main className="mx-auto w-full max-w-6xl min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-4 py-5 pb-[max(2rem,env(safe-area-inset-bottom))] sm:py-6">
+        <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div className="rounded-2xl border border-white/10 bg-[#171a21] p-4">
             <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Pending withdraws</div>
             <div className="mt-1 text-2xl font-extrabold text-white">{pendingCount}</div>
@@ -433,7 +433,7 @@ export default function HiddenAdminPage() {
                 setError(null);
                 setNotice(null);
               }}
-              className={`rounded-full px-4 py-2 text-sm font-bold ring-1 transition active:scale-[0.98] ${
+              className={`rounded-full px-3 py-2 text-xs font-bold ring-1 transition active:scale-[0.98] sm:px-4 sm:text-sm ${
                 tab === id
                   ? "bg-rose-500 text-white ring-rose-500"
                   : "bg-[#171a21] text-zinc-300 ring-white/10 hover:bg-[#1e222b]"
@@ -537,12 +537,12 @@ export default function HiddenAdminPage() {
                   </div>
 
                   {r.status === "PENDING" ? (
-                    <div className="mt-4 flex flex-wrap gap-2">
+                    <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
                       <button
                         type="button"
                         disabled={busyId === r.id}
                         onClick={() => void onAction(r.id, "approve")}
-                        className="rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-extrabold text-zinc-950 hover:bg-emerald-400 disabled:opacity-60"
+                        className="w-full rounded-xl bg-emerald-500 px-4 py-3 text-sm font-extrabold text-zinc-950 hover:bg-emerald-400 disabled:opacity-60 sm:w-auto sm:py-2.5"
                       >
                         {busyId === r.id ? "…" : "Mark withdrawn"}
                       </button>
@@ -550,7 +550,7 @@ export default function HiddenAdminPage() {
                         type="button"
                         disabled={busyId === r.id}
                         onClick={() => void onAction(r.id, "reject")}
-                        className="rounded-xl bg-zinc-700 px-4 py-2.5 text-sm font-extrabold text-white hover:bg-zinc-600 disabled:opacity-60"
+                        className="w-full rounded-xl bg-zinc-700 px-4 py-3 text-sm font-extrabold text-white hover:bg-zinc-600 disabled:opacity-60 sm:w-auto sm:py-2.5"
                       >
                         Reject & refund
                       </button>
@@ -593,9 +593,9 @@ export default function HiddenAdminPage() {
 
         {tab === "support" ? (
           <section className="overflow-hidden rounded-3xl border border-white/10 bg-[#171a21]">
-            <div className="grid min-h-[70vh] lg:grid-cols-[320px_1fr]">
-              <aside className="border-b border-white/10 lg:border-b-0 lg:border-r lg:border-white/10">
-                <div className="flex items-center justify-between border-b border-white/5 px-4 py-3">
+            <div className="grid lg:h-[min(70vh,720px)] lg:grid-cols-[320px_1fr]">
+              <aside className="border-b border-white/10 lg:flex lg:min-h-0 lg:flex-col lg:border-b-0 lg:border-r lg:border-white/10">
+                <div className="flex shrink-0 items-center justify-between border-b border-white/5 px-4 py-3">
                   <h2 className="text-sm font-extrabold text-white">All chats</h2>
                   <button
                     type="button"
@@ -613,7 +613,7 @@ export default function HiddenAdminPage() {
                     No customer chats yet.
                   </div>
                 ) : null}
-                <div className="max-h-[40vh] overflow-y-auto lg:max-h-[calc(70vh-48px)]">
+                <div className="max-h-[45vh] overflow-y-auto overscroll-contain lg:max-h-none lg:min-h-0 lg:flex-1">
                   {supportChats.map((c) => {
                     const active = c.id === activeChatId;
                     return (
@@ -656,14 +656,14 @@ export default function HiddenAdminPage() {
                 </div>
               </aside>
 
-              <div className="flex min-h-[50vh] flex-col">
+              <div className="flex min-h-[55vh] flex-col lg:min-h-0">
                 {activeChatId == null ? (
                   <div className="flex flex-1 items-center justify-center p-8 text-sm font-semibold text-zinc-500">
                     Select a chat to reply
                   </div>
                 ) : (
                   <>
-                    <div className="border-b border-white/5 px-4 py-3">
+                    <div className="shrink-0 border-b border-white/5 px-4 py-3">
                       {(() => {
                         const c = supportChats.find((x) => x.id === activeChatId);
                         return (
@@ -679,7 +679,7 @@ export default function HiddenAdminPage() {
                         );
                       })()}
                     </div>
-                    <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4">
+                    <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-4 py-4">
                       {supportMessages.length === 0 ? (
                         <div className="py-8 text-center text-sm font-semibold text-zinc-500">
                           No messages in this chat yet.
@@ -690,7 +690,7 @@ export default function HiddenAdminPage() {
                         return (
                           <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
                             <div
-                              className={`max-w-[75%] rounded-2xl px-3.5 py-2.5 text-sm font-medium ${
+                              className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 text-sm font-medium sm:max-w-[75%] ${
                                 mine
                                   ? "rounded-br-md bg-rose-500 text-white"
                                   : "rounded-bl-md bg-[#0f1115] text-zinc-200 ring-1 ring-white/10"
@@ -714,19 +714,19 @@ export default function HiddenAdminPage() {
                         );
                       })}
                     </div>
-                    <form onSubmit={onSupportSend} className="border-t border-white/5 p-3">
+                    <form onSubmit={onSupportSend} className="shrink-0 border-t border-white/5 p-3">
                       <div className="flex gap-2">
                         <input
                           value={supportDraft}
                           onChange={(e) => setSupportDraft(e.target.value)}
                           placeholder="Reply as support…"
                           maxLength={2000}
-                          className="flex-1 rounded-xl border border-white/10 bg-[#0f1115] px-4 py-3 text-sm font-semibold text-white outline-none focus:border-rose-500/60"
+                          className="min-w-0 flex-1 rounded-xl border border-white/10 bg-[#0f1115] px-4 py-3 text-sm font-semibold text-white outline-none focus:border-rose-500/60"
                         />
                         <button
                           type="submit"
                           disabled={supportSending || !supportDraft.trim()}
-                          className="rounded-xl bg-rose-500 px-4 py-3 text-sm font-extrabold text-white hover:bg-rose-400 disabled:opacity-50"
+                          className="shrink-0 rounded-xl bg-rose-500 px-4 py-3 text-sm font-extrabold text-white hover:bg-rose-400 disabled:opacity-50"
                         >
                           {supportSending ? "…" : "Send"}
                         </button>
@@ -740,7 +740,7 @@ export default function HiddenAdminPage() {
         ) : null}
 
         {!loading && tab === "settings" ? (
-          <section className="max-w-lg rounded-3xl border border-white/10 bg-[#171a21] p-6">
+          <section className="w-full max-w-lg rounded-3xl border border-white/10 bg-[#171a21] p-5 sm:p-6">
             <h2 className="text-lg font-extrabold text-white">Deposit / Withdraw limits</h2>
             <p className="mt-1 text-sm text-zinc-400">
               Current: deposit ≥ {money(limits?.min_deposit)} · withdraw ≥ {money(limits?.min_withdraw)}
@@ -771,7 +771,7 @@ export default function HiddenAdminPage() {
               <button
                 type="submit"
                 disabled={saving}
-                className="rounded-xl bg-rose-500 px-5 py-3 text-sm font-extrabold text-white hover:bg-rose-400 disabled:opacity-60"
+                className="w-full rounded-xl bg-rose-500 px-5 py-3.5 text-sm font-extrabold text-white hover:bg-rose-400 disabled:opacity-60 sm:w-auto"
               >
                 {saving ? "Saving…" : "Save limits"}
               </button>
@@ -780,7 +780,7 @@ export default function HiddenAdminPage() {
         ) : null}
 
         {!loading && tab === "password" ? (
-          <section className="max-w-lg rounded-3xl border border-white/10 bg-[#171a21] p-6">
+          <section className="w-full max-w-lg rounded-3xl border border-white/10 bg-[#171a21] p-5 sm:p-6">
             <h2 className="text-lg font-extrabold text-white">Change admin password</h2>
             <p className="mt-1 text-sm text-zinc-400">Password change ke baad purani sessions band ho jayengi.</p>
             <form onSubmit={onChangePassword} className="mt-5 space-y-4">
@@ -814,7 +814,7 @@ export default function HiddenAdminPage() {
               <button
                 type="submit"
                 disabled={saving}
-                className="rounded-xl bg-rose-500 px-5 py-3 text-sm font-extrabold text-white hover:bg-rose-400 disabled:opacity-60"
+                className="w-full rounded-xl bg-rose-500 px-5 py-3.5 text-sm font-extrabold text-white hover:bg-rose-400 disabled:opacity-60 sm:w-auto"
               >
                 {saving ? "Updating…" : "Update password"}
               </button>
